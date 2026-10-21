@@ -38,7 +38,17 @@ Azure: RG `rg-voice-ai-workshop`, ACR `voiceaiworkshop`, Container Apps env
 + file share `voiceaidata` (mounted at `/app/appdata`), Azure Table `CallLimits`,
 Container App `voice-ai-workshop`, a service principal `voice-ai-workshop-gha-deploy`
 (AcrPush + Contributor) and a federated credential trusting
-`repo:OWNER/REPO:ref:refs/heads/main`.
+GitHub's current main-branch OIDC subject. For repositories using immutable
+subjects, that is `repo:OWNER@OWNER_ID/REPO@REPO_ID:ref:refs/heads/main`;
+older repositories may use `repo:OWNER/REPO:ref:refs/heads/main`.
+The script reads `sub_claim_prefix` from
+`gh api repos/OWNER/REPO/actions/oidc/customization/sub` and appends
+`:ref:refs/heads/main`, so it uses the exact prefix GitHub reports. You can
+check it without provisioning: `./scripts/provision-azure.sh --print-oidc-subject`.
+If a custom GitHub subject template uses claims other than `repo,context`, the
+script stops before making Azure changes; configure a matching federated
+credential for that template instead of assuming the default subject format.
+See [GitHub's OIDC subject reference](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims).
 
 The call-protection script also sets Container App secrets `call-limit-storage`,
 `admin-password`, and `public-base-url` before the manifest references them.
@@ -63,9 +73,11 @@ GitHub **secrets**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID
 `WORKSHOP_SLIDES_EMBED_URL`, `HANDOFF_PHONE_NUMBER`.
 
 ## Notes
-- **Repository rename or transfer:** rerun `./scripts/provision-azure.sh`. It updates
-  the existing `gha-main` federated credential to trust the repository's current
-  `OWNER/REPO` subject.
+- **Repository rename or transfer:** rerun `./scripts/provision-azure.sh`. GitHub
+  may change the subject format and the prefix still contains the current owner
+  and repository names when immutable IDs are present. The script reads the new
+  prefix and updates the existing `gha-main` federated credential. Check with
+  `--print-oidc-subject` first if you only need to inspect it.
 - **Tenant tag policy:** every resource gets a `created_by` tag (RGs exempt);
   the script handles this, including a pre-created tagged Log Analytics workspace.
 - **Workshop coupling:** the `/health` route the deploy smoke-tests is the same

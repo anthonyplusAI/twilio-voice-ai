@@ -27,6 +27,62 @@ TAGS=(created_by=github-actions managed_by=voice-ai-workshop-ci)
 # ----------------------------------------------------------------------------
 
 require() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not installed." >&2; exit 1; }; }
+
+resolve_oidc_subject() {
+  local repo="$1" settings use_default immutable prefix claim_keys
+  if ! settings=$(gh api "repos/$repo/actions/oidc/customization/sub" \
+    --jq '[.use_default, (.use_immutable_subject // false), (.sub_claim_prefix // ""), ((.include_claim_keys // []) | join(","))] | join("|")'); then
+    echo "ERROR: Could not read GitHub OIDC subject settings for $repo." >&2
+    return 1
+  fi
+  IFS='|' read -r use_default immutable prefix claim_keys <<< "$settings"
+
+  case "$use_default" in
+    true) ;;
+    false)
+      # A repo may inherit its custom claim template from its organization.
+      if [ -z "$claim_keys" ]; then
+        if ! claim_keys=$(gh api "orgs/${repo%%/*}/actions/oidc/customization/sub" \
+          --jq '(.include_claim_keys // []) | join(",")'); then
+          echo "ERROR: Could not read the inherited GitHub OIDC claim template for $repo." >&2
+          return 1
+        fi
+      fi
+      if [ "$claim_keys" != 'repo,context' ]; then
+        echo "ERROR: Custom GitHub OIDC claims ($claim_keys) need a matching Azure subject." >&2
+        echo "       This script only derives the main-branch subject for repo/context claims." >&2
+        return 1
+      fi
+      ;;
+    *)
+      echo "ERROR: GitHub returned an unknown OIDC subject template for $repo." >&2
+      return 1
+      ;;
+  esac
+
+  # GitHub's reported prefix is authoritative: it may contain immutable IDs
+  # even when use_immutable_subject is false (for example after a transfer).
+  if [ -z "$prefix" ]; then
+    if [ "$immutable" = true ]; then
+      echo "ERROR: GitHub enabled immutable OIDC subjects but returned no prefix for $repo." >&2
+      return 1
+    fi
+    prefix="repo:$repo"
+  fi
+  if [[ "$prefix" != repo:*/* || "${prefix#repo:}" == *:* ]]; then
+    echo "ERROR: GitHub returned an unexpected OIDC subject prefix: $prefix" >&2
+    return 1
+  fi
+  printf '%s:ref:refs/heads/main\n' "$prefix"
+}
+
+if [ "${1:-}" = '--print-oidc-subject' ]; then
+  require gh
+  REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+  resolve_oidc_subject "$REPO"
+  exit
+fi
+[ "$#" -eq 0 ] || { echo "Usage: $0 [--print-oidc-subject]" >&2; exit 2; }
 require az
 require gh
 
@@ -35,6 +91,7 @@ az account show >/dev/null 2>&1 || { echo "Not logged into Azure. Run: az login"
 gh auth status  >/dev/null 2>&1 || { echo "Not logged into GitHub. Run: gh auth login" >&2; exit 1; }
 
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+OIDC_SUBJECT=$(resolve_oidc_subject "$REPO")
 SUB=$(az account show --query id -o tsv)
 TENANT=$(az account show --query tenantId -o tsv)
 
@@ -49,6 +106,7 @@ if az group show -n "$RG" -o none 2>/dev/null; then
 fi
 
 echo "    GitHub repo:        $REPO"
+echo "    GitHub OIDC subject: $OIDC_SUBJECT"
 echo "    Azure subscription: $SUB"
 echo "    Resource group:     $RG ($LOCATION)"
 echo "    Container Registry: $ACR | Container App: $ACA"
@@ -99,7 +157,6 @@ APP_ID=$(az ad app list --display-name "$ACA-gha-deploy" --query '[0].appId' -o 
 az ad sp show --id "$APP_ID" -o none 2>/dev/null || az ad sp create --id "$APP_ID" -o none
 az role assignment create --assignee "$APP_ID" --role AcrPush --scope "$(az acr show -n "$ACR" --query id -o tsv)" -o none 2>/dev/null || true
 az role assignment create --assignee "$APP_ID" --role Contributor --scope "$(az group show -n "$RG" --query id -o tsv)" -o none 2>/dev/null || true
-OIDC_SUBJECT="repo:${REPO}:ref:refs/heads/main"
 CURRENT_OIDC_SUBJECT=$(az ad app federated-credential list --id "$APP_ID" --query "[?name=='gha-main'].subject | [0]" -o tsv)
 if [ -z "$CURRENT_OIDC_SUBJECT" ]; then
   az ad app federated-credential create --id "$APP_ID" --parameters "{
