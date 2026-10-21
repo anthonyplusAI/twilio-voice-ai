@@ -120,16 +120,19 @@ export function CallMe() {
             htmlFor="phone-number"
             className="block text-xs text-text-muted mb-1"
           >
-            Your phone number (E.164 format)
+            Your US or Canadian phone number (+1 and 10 digits)
           </label>
           <input
             id="phone-number"
             type="tel"
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value)}
-            placeholder="+15551234567"
+            placeholder="+12065550101"
             className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-navy-border text-sm text-text-primary placeholder:text-text-muted/50 focus:outline-none focus:ring-1 focus:ring-twilio-red/50"
           />
+          <p className="mt-1 text-xs text-text-muted">
+            One call at a time, up to ten calls per number in an hour. Calls end after five minutes.
+          </p>
         </div>
 
         {isBuilder && (

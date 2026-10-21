@@ -1,20 +1,44 @@
 import { NextRequest } from "next/server";
 import twilio from "twilio";
+import { parsePhoneNumberFromString } from "libphonenumber-js/max";
 import { validateBuilderTwimlUrl, type CallTarget } from "@/lib/call-target";
+import { getCallLimiter } from "@/lib/call-limiter.mjs";
+import { createBuilderActionToken } from "@/lib/builder-action-token.mjs";
+import { parseBuilderTwiml, renderBuilderTwiml } from "@/lib/builder-twiml.mjs";
 
-async function checkQuickTunnel(twimlUrl: string): Promise<string | null> {
-  const url = new URL(twimlUrl);
-  // The Builder instructions use a Cloudflare Quick Tunnel. Check that the
-  // saved URL still reaches this learner's server before spending a call.
-  // Other public HTTPS hosts may be deployed servers and are not fetched here.
-  if (!url.hostname.toLowerCase().endsWith(".trycloudflare.com")) return null;
+const MAX_CALL_REQUEST_BYTES = 32 * 1024;
+const MAX_CONCURRENT_BUILDER_PREFLIGHTS = 64;
+let activeBuilderPreflights = 0;
 
-  if (url.port) {
-    return "Use the HTTPS URL from tunnel-url without a custom port.";
+class CallRequestTooLarge extends Error {}
+
+async function readCallBody(request: NextRequest): Promise<unknown> {
+  const declaredBytes = Number(request.headers.get("content-length"));
+  if (declaredBytes > MAX_CALL_REQUEST_BYTES) throw new CallRequestTooLarge();
+
+  const reader = request.body?.getReader();
+  if (!reader) throw new Error("Empty call body");
+  const decoder = new TextDecoder();
+  let body = "";
+  let bytesRead = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    bytesRead += chunk.value.byteLength;
+    if (bytesRead > MAX_CALL_REQUEST_BYTES) {
+      await reader.cancel();
+      throw new CallRequestTooLarge();
+    }
+    body += decoder.decode(chunk.value, { stream: true });
   }
+  return JSON.parse(body + decoder.decode());
+}
 
+async function fetchBuilderTwiml(twimlUrl: string): Promise<string> {
+  const url = new URL(twimlUrl);
   // A brand-new Quick Tunnel can briefly return 530 while its edge registers.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const attempts = url.hostname.toLowerCase().endsWith(".trycloudflare.com") ? 2 : 1;
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const response = await fetch(url, {
         method: "POST",
@@ -42,26 +66,15 @@ async function checkQuickTunnel(twimlUrl: string): Promise<string | null> {
         xml += decoder.decode(chunk.value, { stream: true });
       }
       xml += decoder.decode();
-      if (!/<Response(?:\s|>)/.test(xml)) throw new Error("TwiML Response is missing");
-      const relayUrl = xml.match(/<ConversationRelay\b[^>]*\burl=["']([^"']+)["']/)?.[1];
-      if (!relayUrl) throw new Error("ConversationRelay is missing");
-      const websocket = new URL(relayUrl);
-      if (
-        websocket.protocol !== "wss:" ||
-        websocket.host !== url.host ||
-        websocket.pathname !== "/ws"
-      ) {
-        throw new Error("ConversationRelay points to a different WebSocket");
-      }
-      return null;
+      return xml;
     } catch {
-      if (attempt === 0) {
+      if (attempt + 1 < attempts) {
         await new Promise((resolve) => setTimeout(resolve, 800));
       }
     }
   }
 
-  return "Your Codespace tunnel is not serving the workshop agent. Keep npm run dev running, run tunnel-url again, and paste its new /twiml URL.";
+  throw new Error("Your Codespace tunnel is not serving the workshop agent. Keep npm run dev running, run tunnel-url again, and paste its new /twiml URL.");
 }
 
 export async function POST(request: NextRequest) {
@@ -79,9 +92,13 @@ export async function POST(request: NextRequest) {
   let rawBody: unknown;
 
   try {
-    rawBody = await request.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    rawBody = await readCallBody(request);
+  } catch (error) {
+    const tooLarge = error instanceof CallRequestTooLarge;
+    return Response.json(
+      { error: tooLarge ? "Call request is too large" : "Invalid JSON body" },
+      { status: tooLarge ? 413 : 400 }
+    );
   }
 
   if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
@@ -117,7 +134,21 @@ export async function POST(request: NextRequest) {
 
   if (!/^\+[1-9]\d{1,14}$/.test(phoneNumber)) {
     return Response.json(
-      { error: "phoneNumber must be in E.164 format (e.g. +15551234567)" },
+      { error: "Use +1 followed by your 10-digit US or Canadian phone number." },
+      { status: 400 }
+    );
+  }
+
+  const destination = parsePhoneNumberFromString(phoneNumber);
+  if (!destination?.isValid() || !["US", "CA"].includes(destination.country || "")) {
+    return Response.json(
+      { error: "Call Me currently supports US and Canadian phone numbers only." },
+      { status: 400 }
+    );
+  }
+  if (["PREMIUM_RATE", "SHARED_COST"].includes(destination.getType() || "")) {
+    return Response.json(
+      { error: "Premium-rate or shared-cost numbers are not supported." },
       { status: 400 }
     );
   }
@@ -139,27 +170,33 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let twimlUrl: string;
+  let siteOrigin: string;
+  try {
+    const configured = process.env.PUBLIC_BASE_URL;
+    if (!configured && process.env.NODE_ENV === "production") {
+      throw new Error("PUBLIC_BASE_URL is required in production");
+    }
+    const parsed = new URL(configured || request.url);
+    if (configured && (parsed.protocol !== "https:" || parsed.pathname !== "/" || parsed.search || parsed.hash)) {
+      throw new Error("PUBLIC_BASE_URL must be an HTTPS origin");
+    }
+    siteOrigin = parsed.origin;
+  } catch (error) {
+    console.error("[api/call] Invalid public site URL:", error);
+    return Response.json({ error: "Call Me is temporarily unavailable." }, { status: 503 });
+  }
+  let twimlUrl = "";
+  let builderTwiml: ReturnType<typeof parseBuilderTwiml> | null = null;
   if (body.target === "builder") {
     const urlError = validateBuilderTwimlUrl(body.twimlUrl);
     if (urlError) {
       return Response.json({ error: urlError }, { status: 400 });
     }
-    // Builder track: hand Twilio the user's own /twiml endpoint so their
-    // server.js owns the entire TwiML response (voice, greeting, language,
-    // ConversationRelay attributes, custom parameters, the WebSocket URL).
-    // The website never wraps or rewrites it.
     twimlUrl = (body.twimlUrl as string).trim();
-    const tunnelError = await checkQuickTunnel(twimlUrl);
-    if (tunnelError) {
-      return Response.json({ error: tunnelError }, { status: 422 });
-    }
   } else {
     // Explorer track (or Builder explicitly using the built-in server): the website
     // builds the TwiML, forwarding the picker selections as query params.
-    const host = request.headers.get("host") || "localhost:8080";
-    const protocol = host.includes("localhost") ? "http" : "https";
-    const twimlBaseUrl = `${protocol}://${host}/api/twiml`;
+    const twimlBaseUrl = `${siteOrigin}/api/twiml`;
 
     const twimlParams = new URLSearchParams();
     if (body.agentConfig?.voice) twimlParams.set("voice", body.agentConfig.voice);
@@ -182,15 +219,106 @@ export async function POST(request: NextRequest) {
     twimlUrl = qs ? `${twimlBaseUrl}?${qs}` : twimlBaseUrl;
   }
 
+  let limiter: ReturnType<typeof getCallLimiter>;
+  let reservationId: string;
+  try {
+    limiter = getCallLimiter();
+    const decision = await limiter.reserve(phoneNumber);
+    if (!decision.allowed) {
+      const error = decision.reason === "active"
+        ? "A call to this number is already in progress. Try again after it ends."
+        : "This number has reached ten calls in the last hour. Try again later.";
+      return Response.json(
+        { error },
+        {
+          status: 429,
+          headers: { "Retry-After": String(Math.max(1, Math.ceil(decision.retryAfterSeconds))) },
+        }
+      );
+    }
+    reservationId = decision.reservationId;
+  } catch (error) {
+    console.error("[api/call] Call limit unavailable:", error);
+    return Response.json(
+      { error: "Call Me is temporarily unavailable. Please try again shortly." },
+      { status: 503 }
+    );
+  }
+
+  if (body.target === "builder") {
+    // A reservation blocks concurrent fetches for the same number. The process
+    // limit also bounds tunnel connections when many different numbers are used.
+    if (activeBuilderPreflights >= MAX_CONCURRENT_BUILDER_PREFLIGHTS) {
+      try { await limiter.cancel(phoneNumber, reservationId); } catch (error) {
+        console.error("[api/call] Could not release busy Builder reservation:", error);
+      }
+      return Response.json(
+        { error: "The workshop is handling many call requests. Try again in a moment." },
+        { status: 503 }
+      );
+    }
+    activeBuilderPreflights++;
+    try {
+      // Read the current Codespace TwiML for every call. Twilio receives only
+      // supported ConversationRelay instructions, so the shared account
+      // cannot be told to dial another number directly.
+      const xml = await fetchBuilderTwiml(twimlUrl);
+      builderTwiml = parseBuilderTwiml(xml, twimlUrl);
+    } catch (error) {
+      try { await limiter.cancel(phoneNumber, reservationId); } catch (cancelError) {
+        console.error("[api/call] Could not release invalid Builder reservation:", cancelError);
+      }
+      const message = error instanceof Error ? error.message : "The Codespace TwiML is unavailable.";
+      return Response.json({ error: message }, { status: 422 });
+    } finally {
+      activeBuilderPreflights--;
+    }
+  }
+
+  const statusCallback = new URL("/api/call-status", siteOrigin);
+  statusCallback.searchParams.set("reservationId", reservationId);
+
+  let callInstructions: { twiml: string } | { url: string; method: "POST" };
+  try {
+    if (body.target === "builder") {
+      const token = createBuilderActionToken({
+        actionUrl: builderTwiml!.actionUrl,
+        phoneNumber,
+        reservationId,
+      }, authToken);
+      const actionCallback = new URL("/api/builder-action", siteOrigin);
+      actionCallback.searchParams.set("token", token);
+      callInstructions = { twiml: renderBuilderTwiml(builderTwiml!, actionCallback.toString()) };
+    } else {
+      callInstructions = { url: twimlUrl, method: "POST" };
+    }
+  } catch (error) {
+    console.error("[api/call] Could not prepare Builder TwiML:", error);
+    try { await limiter.cancel(phoneNumber, reservationId); } catch (cancelError) {
+      console.error("[api/call] Could not release invalid Builder reservation:", cancelError);
+    }
+    return Response.json({ error: "The Codespace TwiML is too large or unsupported." }, { status: 422 });
+  }
+
   try {
     const client = twilio(accountSid, authToken);
     const call = await client.calls.create({
       to: phoneNumber,
       from: twilioPhoneNumber,
-      url: twimlUrl,
-      method: "POST",
+      ...callInstructions,
       timeLimit: 300,
+      statusCallback: statusCallback.toString(),
+      statusCallbackMethod: "POST",
+      statusCallbackEvent: ["completed"],
     });
+
+    try {
+      await limiter.markStarted(phoneNumber, reservationId, call.sid);
+    } catch (error) {
+      // Twilio accepted the call. Keep its success response, and let the
+      // signed completion callback or stale-call reconciliation clear the slot.
+      console.error("[api/call] Failed to record started call:", error);
+    }
 
     if (body.sessionId) {
       try {
@@ -207,8 +335,25 @@ export async function POST(request: NextRequest) {
 
     return Response.json({ callSid: call.sid, status: call.status });
   } catch (err) {
+    const status = err && typeof err === "object" && "status" in err
+      ? err.status
+      : null;
+    const definitelyRejected = typeof status === "number" && status >= 400 && status < 500;
+    if (definitelyRejected) {
+      try {
+        await limiter.cancel(phoneNumber, reservationId);
+      } catch (error) {
+        console.error("[api/call] Failed to release a rejected call:", error);
+      }
+    }
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[api/call] Failed to create call:", message);
-    return Response.json({ error: message }, { status: 500 });
+    if (!definitelyRejected) {
+      return Response.json(
+        { error: "We could not confirm whether Twilio started this call. Wait a few minutes before trying again." },
+        { status: 503 }
+      );
+    }
+    return Response.json({ error: "Twilio could not start this call. Check the number and try again." }, { status: 500 });
   }
 }

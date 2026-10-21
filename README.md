@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/anthonyplusAI/twilio-voice-ai/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/anthonyplusAI/twilio-voice-ai/ci.yml?branch=main&label=CI&color=EF223A" alt="CI status" /></a>
-  <img src="https://img.shields.io/badge/Node.js-20-000D25?logo=nodedotjs&logoColor=white" alt="Node.js 20" />
+  <img src="https://img.shields.io/badge/Node.js-22-000D25?logo=nodedotjs&logoColor=white" alt="Node.js 22" />
   <img src="https://img.shields.io/badge/Next.js-16.2-000D25?logo=nextdotjs&logoColor=white" alt="Next.js 16.2" />
   <img src="https://img.shields.io/badge/Twilio-ConversationRelay-EF223A?logo=twilio&logoColor=white" alt="Twilio ConversationRelay" />
 </p>
@@ -82,13 +82,15 @@ Facilitated events may provide credentials at [twil.io/keys](https://twil.io/key
 
 **Call Me on the workshop site uses the site's Twilio account**, including for Builder calls to your Codespace. Your `workshop/.env` Twilio credentials are used when you call through your Codespace's `/call` route. Both call routes require an **upgraded Twilio account**: [current Twilio trial rules block `<ConversationRelay>`](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), even for a verified recipient.
 
+The site's Call Me button accepts valid US and Canadian numbers. It allows one active call to a number and up to ten started calls to that number in any rolling 60 minutes. These limits apply to both Explorer and Builder calls made from the site. Calls started directly from a Codespace's `/call` route use that Codespace's Twilio account instead.
+
 ### Getting started
 
 1. Open the workshop URL provided by the facilitator.
 2. Choose **Explorer** or **Builder** when prompted.
 3. For Builder mode, [create a Codespace for this repository](https://codespaces.new/anthonyplusAI/twilio-voice-ai).
 4. Add an OpenAI API key to `workshop/.env` from the facilitator's [twil.io/keys](https://twil.io/keys) instructions or your own account. The site's Call Me button needs no Twilio credentials in your Codespace. Add upgraded Twilio credentials if you also plan to call from your Codespace's `/call` route.
-5. For the Codespace `/call` route, add your personal phone number to `MY_PHONE_NUMBER` in `workshop/.env` using [E.164 format](https://www.twilio.com/docs/glossary/what-e164), such as `+15551234567`. The site's Call Me button asks for the number in its own form.
+5. For the Codespace `/call` route, add your real phone number to `MY_PHONE_NUMBER` in `workshop/.env` using [E.164 format](https://www.twilio.com/docs/glossary/what-e164), such as `+12065550101` for a US-format example. The site's Call Me button asks for the number in its own form.
 6. To test a live handoff in Chapter 5, set `HANDOFF_PHONE_NUMBER` to a second reachable E.164 phone number, different from the caller's phone.
 7. Follow the chapter navigation in the workshop app. When Chapter 2 asks you to start your server, run `npm run dev` from `workshop/`. It restarts after you save JavaScript changes.
 
@@ -113,7 +115,7 @@ These steps run the full companion app and its custom WebSocket server locally.
 
 ### Maintainer prerequisites
 
-- [Node.js 20](https://nodejs.org/)
+- [Node.js 22](https://nodejs.org/)
 - [pnpm 10.20](https://pnpm.io/installation)
 - A Twilio account SID, auth token, and voice-capable phone number for test calls
 - An OpenAI API key for agent responses
@@ -146,12 +148,13 @@ The home page launches the workshop. Presenter slides are available at `/slides`
 ### Facilitator preflight for a group event
 
 - Use an upgraded Twilio account for the workshop site's Call Me button; [Twilio trials block `<ConversationRelay>`](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). The [default outbound rate](https://www.twilio.com/docs/voice/api/call-resource) is one call per second, so a burst of attendee clicks can queue.
+- Before deploying the protected site, run [`scripts/configure-call-protection.sh`](./scripts/configure-call-protection.sh) after the Azure infrastructure setup. It creates the shared `CallLimits` table and sets the Container App's call-limit, admin-password, and public-URL secrets.
 - Set the deployed site's Twilio credentials and `OPENAI_API_KEY`. Set `HANDOFF_PHONE_NUMBER` to a second reachable phone if the Explorer handoff exercise should transfer.
-- Test from a fresh public attendee Codespace: fill `workshop/.env`, run `npm run dev`, copy `tunnel-url` into Call Me, change the greeting in `server.js`, save, and call again. Confirm the second call speaks the new greeting.
+- On the workshop-only Twilio account, verify [Voice dialing permissions](https://www.twilio.com/docs/voice/api/dialing-permissions-resources): enable low-risk **United States/Canada** only, and leave high-risk categories off. Twilio lists this combined destination as `US`; this account setting also protects calls made outside the site's Call Me button.
+- Test from a fresh public attendee Codespace: fill `workshop/.env`, run `npm run dev`, copy `tunnel-url` into Call Me, change the greeting in `server.js`, save, and call again after ending the first call. Confirm the second call speaks the new greeting. The site reads the Codespace's current `/twiml` response on every Builder call and passes its supported ConversationRelay settings to Twilio. Guided handoff instructions are checked before Twilio dials a second number.
 - Place an Explorer call using the site's hosted agent and check the selected voice, tool, and handoff settings. If handoff is unavailable, tell attendees before the Chapter 5 exercise.
 
-> [!WARNING]
-> The public `/api/call` endpoint has no application-level authentication or rate limit and can spend the configured Twilio account's call credit. Put workshop access controls or an upstream call quota in place before sharing the site broadly. The `/admin` dashboard and destructive `/admin/reset-all` endpoint also lack application-level authentication. Analytics use local SQLite storage and reset when the container is replaced.
+The Call Me endpoint remains public so attendees can use it without signing in. Its per-number limits reduce accidental or repeated use, but there is no site-wide daily cap; monitor Twilio usage during an event. Builder calls accept only the guided ConversationRelay TwiML and a single US or Canadian live handoff. Other TwiML verbs are refused by the shared site's Call Me button; a Codespace's own `/call` route remains a separate option for experiments. `/admin` and `/admin/reset-all` require HTTP Basic authentication with the organizer password. Workshop analytics use local SQLite storage and reset when the container is replaced.
 
 ## Configuration
 
@@ -165,10 +168,16 @@ Copy `.env.example` to `.env.local` for the companion app.
 | `OPENAI_API_KEY` | For calls | OpenAI credential used by the built-in agent |
 | `OPENAI_MODEL` | No | Chat Completions model; defaults to `gpt-5.4-nano` |
 | `HANDOFF_PHONE_NUMBER` | For handoff | Human destination number in E.164 format |
+| `CALL_LIMIT_AZURE_TABLE_CONNECTION_STRING` | Production calls | Connection string for the shared `CallLimits` Azure Table; set by the one-time protection script |
+| `PUBLIC_BASE_URL` | Production calls | Public HTTPS origin used for Twilio call and completion callbacks; set by the one-time protection script |
+| `ADMIN_PASSWORD` | Production admin | Organizer password for `/admin` and `/admin/reset-all`; set by the one-time protection script |
+| `ADMIN_USER` | No | Organizer Basic Auth username; defaults to `presenter` |
 | `WORKSHOP_SLIDES_EMBED_URL` | No | Published Google Slides embed URL for `/slides` |
 | `PORT` | No | Custom server port; defaults to `8080` |
 
 The attendee-built scaffold under `workshop/` uses its own `.env`. Set `MY_PHONE_NUMBER` for outbound tests and a second reachable `HANDOFF_PHONE_NUMBER`, different from the caller's phone, to test live transfers.
+
+In local development, per-number call limits use `data/call-limits.db`. Production uses Azure Table Storage so a replacement Container App revision keeps the same limits.
 
 ## Architecture
 
@@ -179,7 +188,9 @@ The root app uses a custom Node.js HTTP server so Next.js routes, ConversationRe
 flowchart LR
   Learner["Learner browser"] -->|configures agent and requests a call| App["Next.js workshop app"]
   App -->|POST /api/call| Voice["Twilio Voice"]
+  App -->|reserve calls by phone| Limits["Azure Table CallLimits"]
   Voice -->|calls| Phone["Learner phone"]
+  Voice -->|call completion callback| App
   Voice -->|Explorer: /api/twiml| App
   Voice -->|Builder: /twiml| Tunnel["Codespace Quick Tunnel"]
   Voice <-->|speech and text| Relay["ConversationRelay"]
@@ -209,11 +220,12 @@ flowchart LR
 | Endpoint | Purpose |
 |---|---|
 | `POST /api/call` | Initiate an outbound Twilio call |
+| `POST /api/call-status` | Receive signed Twilio call-completion callbacks and release active-call reservations |
 | `POST /api/twiml` | Return ConversationRelay TwiML |
 | `WS(S) /ws` | Exchange ConversationRelay messages with the built-in agent |
 | `POST /api/events` | Ingest workshop analytics events |
 | `GET /health` | Return liveness and uptime |
-| `GET /admin` | Render the analytics dashboard |
+| `GET /admin` | Render the organizer-authenticated analytics dashboard |
 
 ## Customization
 
@@ -226,7 +238,7 @@ The content system is reusable, while the included API routes, voice agent, and 
 
 ## Deployment
 
-Pushes to `main` run lint, type checking, a production build, and secret scanning. Pull requests also run dependency review. A successful `Validate` job builds a Docker image, pushes it to Azure Container Registry, and deploys it to Azure Container Apps with OpenID Connect (OIDC) authentication.
+Pushes to `main` run lint, type checking, a production build, integration tests, and secret scanning. Pull requests also run dependency review. A successful `Validate` job builds a Docker image, pushes it to Azure Container Registry, and deploys it to Azure Container Apps with OpenID Connect (OIDC) authentication.
 
 - [Deployment workflow and rollback](./docs/DEPLOYMENT.md)
 - [One-time Azure infrastructure setup](./docs/INFRA_SETUP.md)

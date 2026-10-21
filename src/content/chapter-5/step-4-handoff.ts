@@ -131,7 +131,7 @@ export default {
       audience: "builder",
       variant: "warning",
       content:
-        "**Update your existing `/twiml` response -- don't create a new one.** You already have a `<ConversationRelay>` element from earlier. Add `action=\"/call-ended\"` to the surrounding `<Connect>` on *that* response, then add the `/call-ended` route below to the same `server.js`. If you forget the `action` attribute, Twilio has no URL to POST `handoffData` to when the session ends, and the `end` message will close the WebSocket without triggering any transfer TwiML -- the call will just hang up.",
+        "**Update your existing `/twiml` response -- don't create a new one.** You already have a `<ConversationRelay>` element from earlier. Add `action=\"/call-ended\"` to the surrounding `<Connect>` on *that* response, then add the `/call-ended` route below to the same `server.js`. If you forget the `action` attribute, the workshop site's Call Me flow will not forward `handoffData` to your Codespace when the AI session ends, so the call will hang up instead of transferring.",
     },
 
     {
@@ -173,7 +173,7 @@ export default {
       audience: "builder",
       variant: "info",
       content:
-        "Add a second reachable phone number to your Codespace's `workshop/.env`, for example `HANDOFF_PHONE_NUMBER=+14155552671` for a teammate or facilitator. Use a number different from the phone receiving Call Me so the transfer can ring a person. It must be in E.164 format. Public Codespaces do not have this value preconfigured. Restart `npm run dev` after editing `.env` so the server loads it. Without a valid number, the agent will say live transfer is unavailable; the action URL also refuses to dial a placeholder. The workshop site's Call Me button uses the site's Twilio account (ask the facilitator); your Codespace's `/call` route uses the credentials in your `.env`. **Whichever account places the call must be upgraded for `<ConversationRelay>`**; [trial accounts block that noun](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), so verifying a phone number alone is insufficient. In production, you can replace the single number with a SIP endpoint or TaskRouter routing.",
+        "Add a second reachable US or Canadian phone number to your Codespace's `workshop/.env`, for example `HANDOFF_PHONE_NUMBER=+14155552671` for a teammate or facilitator. Use a number different from the phone receiving Call Me so the transfer can ring a person. It must be in E.164 format. Public Codespaces do not have this value preconfigured. Restart `npm run dev` after editing `.env` so the server loads it. Without a valid number, the agent will say live transfer is unavailable; the action URL also refuses to dial a placeholder. The workshop site's Call Me button checks this handoff destination before using the site's Twilio account; your Codespace's `/call` route uses the credentials in your `.env`. **Whichever account places the call must be upgraded for `<ConversationRelay>`**; [trial accounts block that noun](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), so verifying a phone number alone is insufficient. In production, you can replace the single number with a SIP endpoint or TaskRouter routing.",
     },
 
     {
@@ -406,7 +406,7 @@ if (state.closed || state.transferring) return;`,
       audience: "builder",
       variant: "warning",
       content:
-        "The transfer handler sends `end` without an audio delay. Twilio then runs the `/call-ended` TwiML in order: one `<Say>` announcement followed by `<Dial>`. Keep the announcement in that action response so there is no timed WebSocket sentence to clip or repeat.",
+        "The transfer handler sends `end` without an audio delay. The workshop site checks the `/call-ended` TwiML, then Twilio runs it in order: one `<Say>` announcement followed by `<Dial>`. Keep the announcement in that action response so there is no timed WebSocket sentence to clip or repeat.",
     },
 
     {

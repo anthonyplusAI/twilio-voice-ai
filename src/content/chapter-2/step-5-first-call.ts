@@ -69,7 +69,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "**Finding Your TwiML URL.** Run `tunnel-url` in your Codespace terminal -- it prints your public TwiML URL, something like `https://random-words-abc123.trycloudflare.com/twiml`. Copy that and paste it into the widget below. That's the `/twiml` route you wrote earlier in this chapter -- Twilio will fetch it the moment the call connects, and the TwiML in your `server.js` (voice, greeting, the `wss://...` for `/ws`, and everything you add in later chapters) is what runs on the call.",
+        "**Finding Your TwiML URL.** Run `tunnel-url` in your Codespace terminal -- it prints your public TwiML URL, something like `https://random-words-abc123.trycloudflare.com/twiml`. Copy that and paste it into the widget below. That's the `/twiml` route you wrote earlier in this chapter. When you click Call Me, the workshop site reads that route and passes its supported ConversationRelay settings (voice, greeting, and the `wss://.../ws` URL) to Twilio. It reads your latest saved code again on every new call.",
     },
 
     { type: "call-me" },

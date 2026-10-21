@@ -5,9 +5,8 @@ name: Deploy to Azure Container Apps
 # this workflow does NOT create infrastructure (RG / ACR / env / storage are
 # provisioned once by scripts/provision-azure.sh).
 #
-# The app uses a containerapp.yaml manifest + an Azure Files mount for the
-# analytics SQLite DB; both are preserved here. App secrets are synced
-# skip-on-unset before the manifest is applied.
+# The app uses a containerapp.yaml manifest and an existing Azure Files mount.
+# App secrets are synced skip-on-unset before the manifest is applied.
 
 on:
   push:
@@ -109,6 +108,19 @@ jobs:
           else
             echo "No secrets to sync."
           fi
+
+      - name: Check call protection setup
+        run: |
+          set -euo pipefail
+          names=$(az containerapp secret list \
+            --name "$ACA_NAME" --resource-group "$ACA_RESOURCE_GROUP" \
+            --query '[].name' -o tsv)
+          for required in call-limit-storage public-base-url admin-password; do
+            if ! grep -Fxq "$required" <<< "$names"; then
+              echo "::error::Missing Container App secret '$required'. Run scripts/configure-call-protection.sh before deploying."
+              exit 1
+            fi
+          done
 
       - name: Apply Container App manifest (image via envsubst)
         env:

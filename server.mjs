@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import next from "next";
+import twilio from "twilio";
 import { WebSocketServer } from "ws";
 import { handleConversationRelayConnection } from "./voice-agent/handler.mjs";
 import { recordEvent, wipeAllEvents } from "./analytics/db.mjs";
@@ -9,6 +11,8 @@ import { generateReport } from "./analytics/report-pdf.mjs";
 
 const port = parseInt(process.env.PORT || "8080", 10);
 const dev = process.env.NODE_ENV !== "production";
+const MAX_EVENT_BODY_BYTES = 32 * 1024;
+const MAX_EVENTS_PER_REQUEST = 100;
 
 const app = next({ dev, hostname: "0.0.0.0", port });
 const handle = app.getRequestHandler();
@@ -22,9 +26,112 @@ function safeParseUrl(req) {
   }
 }
 
+function hasOrganizerCredentials(authorization, adminCredentialDigest) {
+  if (!adminCredentialDigest || typeof authorization !== "string") return false;
+  const match = /^Basic[ \t]+([A-Za-z0-9+/]+={0,2})$/i.exec(authorization);
+  if (!match) return false;
+  const suppliedCredentials = Buffer.from(match[1], "base64");
+  const suppliedDigest = createHash("sha256").update(suppliedCredentials).digest();
+  return timingSafeEqual(suppliedDigest, adminCredentialDigest);
+}
+
+function hasSameOrigin(req) {
+  // Azure Container Apps terminates external HTTPS and overwrites this header
+  // with the visitor's scheme; direct local requests use the socket scheme.
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  const scheme = forwardedProto ?? (req.socket.encrypted ? "https" : "http");
+  if ((scheme !== "http" && scheme !== "https") || !req.headers.host) return false;
+  return req.headers.origin === `${scheme}://${req.headers.host}`;
+}
+
+function hasExactlyKeys(value, keys) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+
+function isShortText(value, maxLength = 128) {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+}
+
+function isAudience(value) {
+  return value === "builder" || value === "explorer";
+}
+
+function isClientEvent(event) {
+  if (!hasExactlyKeys(event, ["type", "payload"])) return false;
+  const payload = event.payload;
+  switch (event.type) {
+    case "session_started":
+      return hasExactlyKeys(payload, ["audience"]) && isAudience(payload.audience);
+    case "audience_changed":
+      return hasExactlyKeys(payload, ["from", "to"]) &&
+        isAudience(payload.from) && isAudience(payload.to);
+    case "step_viewed":
+    case "step_completed":
+      return hasExactlyKeys(payload, ["chapterId", "stepId", "chapterSlug", "stepSlug"]) &&
+        Number.isSafeInteger(payload.chapterId) && payload.chapterId > 0 &&
+        Number.isSafeInteger(payload.stepId) && payload.stepId > 0 &&
+        isShortText(payload.chapterSlug) && isShortText(payload.stepSlug);
+    case "badge_earned":
+      return hasExactlyKeys(payload, ["badgeId"]) && isShortText(payload.badgeId);
+    case "agent_configured":
+      return hasExactlyKeys(payload, ["field", "value"]) &&
+        isShortText(payload.field, 64) &&
+        typeof payload.value === "string" && payload.value.length <= 8192;
+    case "skip_ahead":
+      return hasExactlyKeys(payload, ["fromStep", "toStep"]) &&
+        isShortText(payload.fromStep, 256) && isShortText(payload.toStep, 256);
+    case "share_clicked":
+      return hasExactlyKeys(payload, ["platform"]) &&
+        (payload.platform === "x" || payload.platform === "linkedin");
+    case "progress_reset":
+      return hasExactlyKeys(payload, []);
+    default:
+      return false;
+  }
+}
+
+function eventError(res, status, error, closeConnection = false) {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    ...(closeConnection ? { Connection: "close" } : {}),
+  });
+  res.end(JSON.stringify({ error }));
+}
+
 app.prepare().then(() => {
+  // Next loads .env.local during prepare(), so resolve the organizer secret
+  // after that step. Basic credentials require HTTPS at the public ingress.
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  const adminUser = process.env.ADMIN_USER || "presenter";
+  const adminCredentialDigest = adminPassword
+    ? createHash("sha256").update(`${adminUser}:${adminPassword}`).digest()
+    : null;
+
   const server = createServer((req, res) => {
     const { pathname } = safeParseUrl(req);
+
+    if (pathname === "/admin" || pathname.startsWith("/admin/")) {
+      res.setHeader("Cache-Control", "no-store");
+      if (!adminCredentialDigest) {
+        res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Organizer access is not configured");
+        return;
+      }
+      if (!hasOrganizerCredentials(req.headers.authorization, adminCredentialDigest)) {
+        res.writeHead(401, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "WWW-Authenticate": 'Basic realm="Workshop Admin", charset="UTF-8"',
+        });
+        res.end("Organizer sign-in required");
+        return;
+      }
+      if (pathname === "/admin/reset-all" && req.method === "POST" && !hasSameOrigin(req)) {
+        res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Reset request must come from this site");
+        return;
+      }
+    }
 
     // Liveness probe for the deploy smoke test + ACA health checks. Matches the
     // /health route taught in chapter-6 (status + uptime). Unauthenticated, no
@@ -36,26 +143,60 @@ app.prepare().then(() => {
     }
 
     if (pathname === "/api/events" && req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk) => (body += chunk));
+      const declaredLength = Number(req.headers["content-length"]);
+      if (declaredLength > MAX_EVENT_BODY_BYTES) {
+        req.pause();
+        eventError(res, 413, "Analytics batch is too large", true);
+        return;
+      }
+
+      let receivedBytes = 0;
+      let rejected = false;
+      const chunks = [];
+      req.on("data", (chunk) => {
+        if (rejected) return;
+        receivedBytes += chunk.length;
+        if (receivedBytes > MAX_EVENT_BODY_BYTES) {
+          rejected = true;
+          req.pause();
+          eventError(res, 413, "Analytics batch is too large", true);
+          return;
+        }
+        chunks.push(chunk);
+      });
       req.on("end", () => {
+        if (rejected) return;
+        let batch;
         try {
-          const { sessionId, events } = JSON.parse(body);
-          if (sessionId && Array.isArray(events)) {
-            for (const e of events) {
-              if (e.type) recordEvent(sessionId, e.type, e.payload ?? null);
-            }
-          }
-        } catch {}
+          batch = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          eventError(res, 400, "Invalid analytics JSON");
+          return;
+        }
+        if (!hasExactlyKeys(batch, ["sessionId", "events"]) ||
+            typeof batch.sessionId !== "string" ||
+            !/^[A-Za-z0-9_-]{1,128}$/.test(batch.sessionId) ||
+            !Array.isArray(batch.events) ||
+            batch.events.length > MAX_EVENTS_PER_REQUEST ||
+            !batch.events.every(isClientEvent)) {
+          eventError(res, 400, "Invalid analytics events batch");
+          return;
+        }
+
+        for (const event of batch.events) {
+          recordEvent(batch.sessionId, event.type, event.payload);
+        }
         res.writeHead(204).end();
+      });
+      req.on("error", () => {
+        if (!rejected && !res.headersSent) eventError(res, 400, "Invalid analytics request");
       });
       return;
     }
 
-    // Admin-only: wipe every event in the analytics database so the next run
-    // starts from a clean slate. Meant for pre-workshop testing; the UI shows
-    // a double-confirm. No auth here because the whole /admin surface is
-    // expected to sit behind an upstream gate in production.
+    // Organizer-only: wipe every event in the analytics database so the next
+    // run starts clean. Authentication and same-origin checks above protect
+    // this destructive action; the UI also shows a double-confirm.
     if (pathname === "/admin/reset-all" && req.method === "POST") {
       try {
         const removed = wipeAllEvents();
@@ -123,6 +264,49 @@ app.prepare().then(() => {
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = safeParseUrl(req);
     if (pathname === "/ws") {
+      const rejectUpgrade = (status, reason) => {
+        socket.end(
+          `HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+          () => socket.destroy()
+        );
+      };
+
+      const authToken = process.env.TWILIO_AUTH_TOKEN;
+      let signedUrl;
+      try {
+        const configured = process.env.PUBLIC_BASE_URL;
+        if (!authToken || (!configured && !dev)) {
+          throw new Error("Missing WebSocket authentication configuration");
+        }
+        // Twilio signs the public WSS URL, while Azure terminates TLS before
+        // forwarding the handshake. Only local development may use Host here.
+        const localHost = req.headers.host;
+        if (!configured && (typeof localHost !== "string" || !localHost)) {
+          throw new Error("Missing public host");
+        }
+        const origin = new URL(configured || `https://${localHost}`);
+        if (origin.protocol !== "https:" || origin.pathname !== "/" ||
+            origin.search || origin.hash || origin.username || origin.password) {
+          throw new Error("Invalid public WebSocket origin");
+        }
+        signedUrl = `wss://${origin.host}/ws`;
+      } catch {
+        rejectUpgrade(503, "Service Unavailable");
+        return;
+      }
+
+      const signature = req.headers["x-twilio-signature"];
+      let verified = false;
+      if (req.url === "/ws" && typeof signature === "string" && signature) {
+        try {
+          verified = twilio.validateRequest(authToken, signature, signedUrl, {});
+        } catch { /* A malformed signature is unauthorized. */ }
+      }
+      if (!verified) {
+        rejectUpgrade(403, "Forbidden");
+        return;
+      }
+
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req);
       });

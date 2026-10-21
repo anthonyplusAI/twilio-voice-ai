@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import twilio from "twilio";
 
 let app;
 let baseUrl;
@@ -30,6 +31,7 @@ before(async () => {
       TWILIO_AUTH_TOKEN: "test-token",
       TWILIO_PHONE_NUMBER: "+12065550100",
       OPENAI_API_KEY: "sk-test",
+      PUBLIC_BASE_URL: "https://workshop.example",
       HANDOFF_PHONE_NUMBER: "",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -113,6 +115,8 @@ test("Explorer TwiML disables handoff until the learner turns it on", async () =
   const xml = await response.text();
   assert.match(xml, /<Parameter name="handoffEnabled" value="false"\s*\/>/);
   assert.match(xml, /reportInputDuringAgentSpeech="any"/);
+  assert.match(xml, /<Connect action="https:\/\/workshop\.example\/api\/connect-action" method="POST">/);
+  assert.match(xml, /url="wss:\/\/workshop\.example\/ws"/);
 });
 
 test("Explorer TwiML enables handoff only after an explicit true setting", async () => {
@@ -142,15 +146,37 @@ test("Explorer keeps an explicitly selected voice", async () => {
 });
 
 test("A missing handoff destination never dials the sample phone number", async () => {
+  const params = {
+    AccountSid: "invalid-test-sid",
+    CallSid: "CA-test",
+    HandoffData: JSON.stringify({ reasonCode: "live-agent-handoff" }),
+  };
   const response = await fetch(`${baseUrl}/api/connect-action`, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      HandoffData: JSON.stringify({ reasonCode: "live-agent-handoff" }),
-    }),
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "x-twilio-signature": twilio.getExpectedTwilioSignature(
+        "test-token", "https://workshop.example/api/connect-action", params,
+      ),
+    },
+    body: new URLSearchParams(params),
   });
   assert.equal(response.status, 200);
   const xml = await response.text();
   assert.doesNotMatch(xml, /<Dial>/);
   assert.match(xml, /handoff is unavailable/i);
+});
+
+test("A forged call-completion callback cannot release a phone number", async () => {
+  const response = await fetch(`${baseUrl}/api/call-status?reservationId=forged`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      AccountSid: "invalid-test-sid",
+      CallSid: "CAforged",
+      CallStatus: "completed",
+      To: "+12065550101",
+    }),
+  });
+  assert.equal(response.status, 403);
 });
