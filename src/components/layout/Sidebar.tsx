@@ -34,13 +34,20 @@ function StepIcon({ state }: { state: "pending" | "active" | "completed" }) {
 }
 
 export function Sidebar() {
-  const params = useParams();
   const pathname = usePathname();
+  // The /workshop/complete page renders its own full-bleed layout — no sidebar.
+  if (pathname === "/workshop/complete") return null;
+
+  // A completed navigation resets transient drawer and skip-confirmation state,
+  // including when the route changes outside the sidebar or via browser history.
+  return <SidebarContent key={pathname} />;
+}
+
+function SidebarContent() {
+  const params = useParams();
   const router = useRouter();
   const chapterSlug = params.chapter as string | undefined;
   const stepSlug = params.step as string | undefined;
-  // The /workshop/complete page renders its own full-bleed layout — no sidebar.
-  const onCompletePage = pathname === "/workshop/complete";
   const { config, chapters, getChapter } = useWorkshop();
   const chapter = chapterSlug ? getChapter(chapterSlug) : chapters[0];
   const { progress, completedStepsSet } = useProgressContext();
@@ -48,16 +55,6 @@ export function Sidebar() {
 
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  // Auto-close the mobile drawer whenever the route changes — otherwise clicking
-  // a step leaves the drawer open over the new page. Guarded so it only fires
-  // on real opens → closes rather than on every route change.
-  useEffect(() => {
-    if (mobileOpen) setMobileOpen(false);
-    // Intentionally only watch pathname — we want this to fire on nav, not on
-    // the state flip itself.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
 
   // Lock body scroll while the drawer is open so the page behind doesn't
   // scroll through the backdrop.
@@ -170,7 +167,7 @@ export function Sidebar() {
     setPendingHref(null);
   }
 
-  if (!chapter || onCompletePage) return null;
+  if (!chapter) return null;
 
   const sidebarConfig = config.sidebar;
 
