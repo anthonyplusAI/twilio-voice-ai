@@ -12,7 +12,7 @@
     "dev": "node server.mjs",
     "dev:next": "next dev",
     "build": "next build",
-    "test": "pnpm build && node --test tests/*.test.mjs",
+    "test": "pnpm build && node --test --test-concurrency=2 tests/*.test.mjs",
     "start": "node server.mjs",
     "lint": "eslint",
     "typecheck": "tsc --noEmit"

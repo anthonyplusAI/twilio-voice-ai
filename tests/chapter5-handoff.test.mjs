@@ -142,6 +142,7 @@ function makeHarness({
       this.chat = { completions: { create: async input => {
         completions.push(structuredClone(input.messages));
         const chunks = await respond(completions.length);
+        if (chunks?.[Symbol.asyncIterator]) return chunks;
         return (async function* () { for (const chunk of chunks) yield chunk; })();
       } } };
     }
@@ -232,6 +233,24 @@ test("DTMF 2 uses the same handoff path", async () => {
   assert.equal(app.completions.length, 0);
   assert.equal(ws.messages.filter(message => message.type === "text").length, 0);
   assert.equal(ws.messages.filter(message => message.type === "end").length, 1);
+  ws.close();
+});
+
+test("DTMF handoff does not nudge while its transfer check is pending", async () => {
+  let finishTransfer;
+  const pendingTransfer = new Promise(resolve => { finishTransfer = resolve; });
+  const app = makeHarness({
+    configureHandlers: handlers => { handlers.transfer_to_agent = () => pendingTransfer; },
+  });
+  const ws = app.socket();
+  ws.receive({ type: "setup", callSid: "CA123" });
+  ws.receive({ type: "dtmf", digit: "2" });
+  app.clock.advance(16000);
+  assert.equal(ws.messages.filter(message => message.type === "text" && /still there|still here/i.test(message.token)).length, 0);
+  finishTransfer({ status: "unavailable" });
+  await settle();
+  app.clock.advance(8000);
+  assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 1);
   ws.close();
 });
 
@@ -362,9 +381,128 @@ for (const stepFile of chapter5Steps.slice(1)) {
     assert.equal(app.completions.length, 2);
     ws.close();
   });
+
+  test(`${stepFile} does not mistake a slow tool lookup for caller silence`, async () => {
+    let finishLookup;
+    const pendingLookup = new Promise(resolve => { finishLookup = resolve; });
+    const app = makeHarness({
+      stepFile,
+      configureHandlers: handlers => { handlers.lookup_order = () => pendingLookup; },
+      respond: number => number === 1 ? toolCall("lookup_order", { order_id: "123" }) : [
+        { choices: [{ delta: { content: "Your order shipped." }, finish_reason: null }] },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ],
+    });
+    const ws = app.socket();
+    ws.receive({ type: "setup", callSid: "CA123" });
+    ws.receive({ type: "prompt", voicePrompt: "Where is order 123?", last: true });
+    await settle();
+
+    app.clock.advance(16000);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there|still here/i.test(message.token)).length, 0);
+
+    finishLookup({ order_id: "123", status: "shipped" });
+    await settle();
+    assert.ok(ws.messages.some(message => message.type === "text" && /Your order shipped/.test(message.token)));
+    app.clock.advance(8000);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 1);
+    ws.close();
+  });
 }
 
 for (const stepFile of chapter5Steps) {
+  test(`${stepFile} remembers the spoken part of an interrupted stream`, async () => {
+    let releaseFirstStream;
+    const holdFirstStream = new Promise(resolve => { releaseFirstStream = resolve; });
+    const app = makeHarness({
+      stepFile,
+      respond: number => number === 1
+        ? (async function* () {
+          yield { choices: [{ delta: { content: "I found your order. " }, finish_reason: null }] };
+          await holdFirstStream;
+        })()
+        : [
+          { choices: [{ delta: { content: "A new answer." }, finish_reason: null }] },
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ],
+    });
+    const ws = app.socket();
+    ws.receive({ type: "prompt", voicePrompt: "Where is my order?", last: true });
+    await settle();
+    assert.ok(ws.messages.some(message => message.type === "text" && /I found your order/.test(message.token)));
+    ws.receive({ type: "interrupt", utteranceUntilInterrupt: "I found your order." });
+    ws.receive({ type: "prompt", voicePrompt: "Actually, tell me something else.", last: true });
+    await settle();
+    const secondHistory = app.completions[1];
+    assert.ok(secondHistory.some(message => message.role === "assistant" && message.content === "I found your order."));
+    releaseFirstStream();
+    await settle();
+    ws.close();
+  });
+
+  test(`${stepFile} waits for a slow answer before starting the silence countdown`, async () => {
+    let finishAnswer;
+    const pendingAnswer = new Promise(resolve => { finishAnswer = resolve; });
+    const app = makeHarness({ stepFile, respond: () => pendingAnswer });
+    const ws = app.socket();
+    ws.receive({ type: "setup", callSid: "CA123" });
+    ws.receive({ type: "prompt", voicePrompt: "Where is my order?", last: true });
+    app.clock.advance(4000);
+    ws.receive({ type: "prompt", voicePrompt: "Wait, one more thing", last: false });
+    app.clock.advance(12000);
+    assert.equal(ws.messages.filter(message => message.type === "text").length, 0);
+
+    finishAnswer([
+      { choices: [{ delta: { content: "Your order is on its way." }, finish_reason: null }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }] },
+    ]);
+    await settle();
+    assert.ok(ws.messages.some(message => message.type === "text" && /Your order/.test(message.token)));
+
+    app.clock.advance(7999);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 0);
+    app.clock.advance(1);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 1);
+    ws.close();
+  });
+
+  test(`${stepFile} starts a silence countdown when a slow answer is interrupted`, async () => {
+    let finishAnswer;
+    const pendingAnswer = new Promise(resolve => { finishAnswer = resolve; });
+    const app = makeHarness({ stepFile, respond: () => pendingAnswer });
+    const ws = app.socket();
+    ws.receive({ type: "setup", callSid: "CA123" });
+    ws.receive({ type: "prompt", voicePrompt: "Tell me about my order", last: true });
+    app.clock.advance(4000);
+    ws.receive({ type: "interrupt", utteranceUntilInterrupt: "" });
+    app.clock.advance(7999);
+    assert.equal(ws.messages.filter(message => message.type === "text").length, 0);
+    app.clock.advance(1);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 1);
+    finishAnswer([
+      { choices: [{ delta: { content: "An obsolete reply." }, finish_reason: null }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }] },
+    ]);
+    await settle();
+    assert.equal(ws.messages.filter(message => message.type === "text" && /obsolete/i.test(message.token)).length, 0);
+    ws.close();
+  });
+
+  test(`${stepFile} restarts the silence timer after an AI error fallback`, async () => {
+    const app = makeHarness({
+      stepFile,
+      respond: () => { throw new Error("model unavailable"); },
+    });
+    const ws = app.socket();
+    ws.receive({ type: "setup", callSid: "CA123" });
+    ws.receive({ type: "prompt", voicePrompt: "Tell me about my order", last: true });
+    await settle();
+    assert.ok(ws.messages.some(message => message.type === "text" && /technical issue/i.test(message.token)));
+    app.clock.advance(8000);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 1);
+    ws.close();
+  });
+
   test(`${stepFile} resolves advertised delivered order 789`, async () => {
     const app = makeHarness({ stepFile });
     const order = await app.handlers.lookup_order({ order_id: "789" });
@@ -372,11 +510,11 @@ for (const stepFile of chapter5Steps) {
     assert.equal(order.eta, "already delivered");
   });
 
-  test(`${stepFile} retains the chosen voice and transcription settings`, () => {
+  test(`${stepFile} retains the bilingual voice and transcription settings`, () => {
     const app = makeHarness({ stepFile });
     const xml = app.request("/twiml");
-    assert.match(xml, /voice="21m00Tcm4TlvDq8ikWAM"/);
-    assert.match(xml, /ttsProvider="ElevenLabs"/);
+    assert.doesNotMatch(xml, /\bvoice=/);
+    assert.doesNotMatch(xml, /\bttsProvider=/);
     assert.match(xml, /language="en-US"/);
     assert.match(xml, /transcriptionProvider="Deepgram"/);
     assert.match(xml, /speechModel="nova-3-general"/);

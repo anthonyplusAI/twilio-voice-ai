@@ -6,19 +6,89 @@ import { useAudienceMode } from "@/lib/AudienceContext";
 const TOOL_SCRIPT: Record<string, { label: string; line: string }> = {
   check_weather: {
     label: "Weather lookup",
-    line: '"What is the weather in San Francisco?"',
+    line: "What is the weather in San Francisco?",
   },
   lookup_order: {
     label: "Order lookup",
-    line: '"Can you check the status of order 123?"',
+    line: "Can you check the status of order 123?",
   },
   tell_joke: {
     label: "Joke",
-    line: '"Tell me a joke."',
+    line: "Tell me a joke.",
   },
 };
 
 const ALL_TOOL_IDS = Object.keys(TOOL_SCRIPT);
+
+type SpokenPrompts = {
+  check_weather: string;
+  lookup_order: string;
+  tell_joke: string;
+  interruption: string;
+  handoff: string;
+  handoffOff: string;
+};
+
+// The instructions remain in English for the workshop attendee, while the
+// quoted phrases are ready to say in the language their Explorer agent uses.
+const EXPLORER_SPOKEN: Record<string, SpokenPrompts> = {
+  "en-US": {
+    check_weather: "What is the weather in San Francisco?",
+    lookup_order: "Can you check the status of order 123?",
+    tell_joke: "Tell me a joke.",
+    interruption: "Can you tell me about your services in detail?",
+    handoff: "I need to speak to a person.",
+    handoffOff: "Can I speak to a person?",
+  },
+  "zh-CN": {
+    check_weather: "旧金山的天气怎么样？",
+    lookup_order: "能帮我查一下订单 123 的状态吗？",
+    tell_joke: "讲个笑话吧。",
+    interruption: "请详细介绍一下你能提供的服务。",
+    handoff: "我需要和真人客服说话。",
+    handoffOff: "我可以和真人客服说话吗？",
+  },
+  "fr-FR": {
+    check_weather: "Quel temps fait-il à San Francisco ?",
+    lookup_order: "Pouvez-vous vérifier le statut de la commande 123 ?",
+    tell_joke: "Racontez-moi une blague.",
+    interruption: "Pouvez-vous me parler en détail de vos services ?",
+    handoff: "Je voudrais parler à une personne.",
+    handoffOff: "Puis-je parler à une personne ?",
+  },
+  "hi-IN": {
+    check_weather: "सैन फ्रांसिस्को में मौसम कैसा है?",
+    lookup_order: "क्या आप ऑर्डर 123 की स्थिति बता सकते हैं?",
+    tell_joke: "मुझे एक चुटकुला सुनाइए।",
+    interruption: "कृपया अपनी सेवाओं के बारे में विस्तार से बताइए।",
+    handoff: "मुझे किसी व्यक्ति से बात करनी है।",
+    handoffOff: "क्या मैं किसी व्यक्ति से बात कर सकता हूँ?",
+  },
+  "pt-BR": {
+    check_weather: "Como está o tempo em São Francisco?",
+    lookup_order: "Você pode verificar o status do pedido 123?",
+    tell_joke: "Conte uma piada.",
+    interruption: "Você pode me explicar seus serviços em detalhes?",
+    handoff: "Preciso falar com uma pessoa.",
+    handoffOff: "Posso falar com uma pessoa?",
+  },
+  "ru-RU": {
+    check_weather: "Какая погода в Сан-Франциско?",
+    lookup_order: "Можете проверить статус заказа 123?",
+    tell_joke: "Расскажите анекдот.",
+    interruption: "Расскажите подробнее о ваших услугах.",
+    handoff: "Мне нужно поговорить с человеком.",
+    handoffOff: "Можно поговорить с человеком?",
+  },
+  "es-ES": {
+    check_weather: "¿Qué tiempo hace en San Francisco?",
+    lookup_order: "¿Puedes consultar el estado del pedido 123?",
+    tell_joke: "Cuéntame un chiste.",
+    interruption: "¿Puedes contarme con detalle qué servicios ofreces?",
+    handoff: "Necesito hablar con una persona.",
+    handoffOff: "¿Puedo hablar con una persona?",
+  },
+};
 
 function parseEnabledTools(stored: string | undefined): string[] {
   if (stored === undefined) return ALL_TOOL_IDS;
@@ -34,6 +104,8 @@ export function DemoScript() {
   const { progress } = useProgressContext();
   const enabledTools = parseEnabledTools(progress.workshopState.enabledTools);
   const handoffOn = progress.workshopState.handoffEnabled === "true";
+  const spoken = EXPLORER_SPOKEN[progress.workshopState.language || "en-US"] ||
+    EXPLORER_SPOKEN["en-US"];
 
   const steps: { title: string; detail: string }[] = [
     {
@@ -50,14 +122,15 @@ export function DemoScript() {
     const tool = TOOL_SCRIPT[toolId];
     steps.push({
       title: `Test the ${tool.label}`,
-      detail: `Say: ${tool.line}${isBuilder ? " Skip this if you removed the tool from your code." : ""}`,
+      detail: `Say: "${isBuilder ? tool.line : spoken[toolId as keyof SpokenPrompts]}"${isBuilder ? " Skip this if you removed the tool from your code." : ""}`,
     });
   }
 
   steps.push({
     title: "Test interruption",
-    detail:
-      "Ask a long question, then start talking again before the agent finishes. The agent should stop and listen.",
+    detail: isBuilder
+      ? "Ask a long question, then start talking again before the agent finishes. The agent should stop and listen."
+      : `Say: "${spoken.interruption}" Then start talking again before the agent finishes. The agent should stop and listen.`,
   });
 
   if (isBuilder || enabledTools.includes("lookup_order")) {
@@ -78,13 +151,12 @@ export function DemoScript() {
   } else if (handoffOn) {
     steps.push({
       title: "Request a human",
-      detail: 'Say: "I need to speak to a person." The agent should transfer if the workshop has a live handoff number configured; otherwise it should explain that handoff is unavailable.',
+      detail: `Say: "${spoken.handoff}" The agent should transfer if the workshop has a live handoff number configured; otherwise it should explain that handoff is unavailable.`,
     });
   } else {
     steps.push({
       title: "Ask for a human (handoff is off)",
-      detail:
-        'Say: "Can I speak to a person?" The agent should politely decline and keep trying to help.',
+      detail: `Say: "${spoken.handoffOff}" The agent should politely decline and keep trying to help.`,
     });
   }
 

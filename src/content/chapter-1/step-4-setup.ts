@@ -36,7 +36,7 @@ export default {
             variant: "backup-plan",
             audience: "builder",
             content:
-                "**Codespace won't open or your org has it disabled?** Two backup paths:\n\n**Option 1 — Run locally.** Clone [the repo](https://github.com/anthonyplusAI/twilio-voice-ai), run `npm ci` in the `workshop/` folder, and use [ngrok](https://ngrok.com) to expose port 8080 to Twilio. Full instructions for the ngrok fallback are coming up at the end of this chapter. Requires Node.js 20+ installed on your laptop.\n\n**Option 2 (easier) — Switch to Explorer mode.** Explorer track is the observer path; you follow along with the concepts without writing code. Flip the track toggle at the top of the page and pair with a Builder next to you -- you'll still hear the agent and make test calls, just from the caller's side.",
+                "**Codespace won't open or your org has it disabled?** Two backup paths:\n\n**Option 1 — Run locally.** Clone [the repo](https://github.com/anthonyplusAI/twilio-voice-ai), run `npm ci` in the `workshop/` folder, and use [ngrok](https://ngrok.com) to expose the repository's protected proxy on port 8081 to Twilio. Full instructions for the ngrok fallback are coming up at the end of this chapter. Requires Node.js 20+ installed on your laptop.\n\n**Option 2 (easier) — Switch to Explorer mode.** Explorer track is the observer path; you follow along with the concepts without writing code. Flip the track toggle at the top of the page and pair with a Builder next to you -- you'll still hear the agent and make test calls, just from the caller's side.",
         },
 
         {
@@ -51,7 +51,7 @@ export default {
             type: "builder-only",
             audience: "explorer",
             context:
-                "**You can skip ahead whenever you're ready.** 'The Builder' is busy for a few minutes on this step.\n\n**What they are doing:** Adding an OpenAI API key to the agent's config file. They may also add upgraded Twilio credentials if they want to place calls from their own Codespace; the workshop site's Call Me button uses the site's account.\n\n**What comes next:** In the next chapter the agent takes its first call. That is where you will actually hear it.",
+                "**You can skip ahead whenever you're ready.** 'The Builder' is busy for a few minutes on this step.\n\n**What they are doing:** Adding an OpenAI API key to the agent's config file. They may also add upgraded Twilio credentials if they want to place calls with `npm run call`; the workshop site's Call Me button uses the site's account.\n\n**What comes next:** In the next chapter the agent takes its first call. That is where you will actually hear it.",
         },
 
         { type: "page-break" },
@@ -74,7 +74,7 @@ export default {
             variant: "info",
             audience: "builder",
             content:
-                "**Get an OpenAI API key from [twil.io/keys](https://twil.io/keys) or your own OpenAI account.** Paste it into `workshop/.env`. Your facilitator may show a key on a slide. The workshop site's Call Me button uses the site's upgraded Twilio account; Codespace Twilio values are optional for that call. If you want to use the Codespace `/call` route, also add upgraded Twilio credentials supplied by the facilitator or your own account.",
+                "**Get an OpenAI API key from [twil.io/keys](https://twil.io/keys) or your own OpenAI account.** Paste it into `workshop/.env`. Your facilitator may show a key on a slide. The workshop site's Call Me button uses the site's upgraded Twilio account; Codespace Twilio values are optional for that call. If you want to use `npm run call` with your own account, also add upgraded Twilio credentials supplied by the facilitator or your own account.",
         },
 
         {
@@ -87,7 +87,7 @@ export default {
         {
             type: "code",
             audience: "builder",
-            code: `# Needed only when calling from your Codespace's /call route
+            code: `# Needed only for npm run call with your own Twilio account
 TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
 TWILIO_PHONE_NUMBER=
@@ -98,7 +98,7 @@ OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # Optional: a second phone for live transfer
 HANDOFF_PHONE_NUMBER=
 
-# Set this for your Codespace /call route (include country code)
+# Set this for npm run call (include country code)
 MY_PHONE_NUMBER=`,
             language: "bash",
             file: "workshop/.env",
@@ -108,7 +108,7 @@ MY_PHONE_NUMBER=`,
             type: "prose",
             audience: "builder",
             content:
-                "If you plan to call from your Codespace's `/call` route, update `MY_PHONE_NUMBER` with your real phone number in E.164 format (international format — country code plus number, no spaces or dashes, e.g. `+12065551234`). The workshop site's Call Me button asks for your number in its own form. To test a live handoff in Chapter 5, set `HANDOFF_PHONE_NUMBER` to a second reachable phone, such as a teammate's, that is different from the caller's phone.",
+                "If you plan to run `npm run call`, update `MY_PHONE_NUMBER` with your real phone number in E.164 format (international format — country code plus number, no spaces or dashes, e.g. `+12065551234`). The workshop site's Call Me button asks for your number in its own form. To test a live handoff in Chapter 5, set `HANDOFF_PHONE_NUMBER` to a second reachable phone, such as a teammate's, that is different from the caller's phone.",
         },
 
         {
@@ -132,7 +132,7 @@ MY_PHONE_NUMBER=`,
             variant: "tip",
             audience: "builder",
             content:
-                "**Want to use your own accounts after the workshop?** Get an [OpenAI API key](https://platform.openai.com/api-keys) and, for calls from your Codespace's `/call` route, an [upgraded Twilio account](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). Replace the values in `.env` to use them from your Codespace. The workshop site's Call Me button still places calls from the site's separate Twilio account. Twilio trials block ConversationRelay, even for verified numbers.",
+                "**Want to use your own accounts after the workshop?** Get an [OpenAI API key](https://platform.openai.com/api-keys) and, for `npm run call`, an [upgraded Twilio account](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). [Enable Conversation Relay](https://www.twilio.com/docs/voice/conversationrelay/onboarding#configuration-steps-in-the-twilio-console) by accepting its AI/ML features addendum in that account's Voice settings. Replace the values in `.env` to use them from your Codespace. The workshop site's Call Me button still places calls from the site's separate Twilio account. Twilio trials block ConversationRelay, even for verified numbers.",
         },
 
         {

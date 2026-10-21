@@ -99,6 +99,8 @@ VOICE GUIDELINES:
 
 LANGUAGE DETECTION:
 - You can speak English and Spanish fluently.
+- If the caller asks to switch languages, answer in the requested language
+  on your next response, even when the request was spoken in English.
 - If the caller switches languages, respond in that language.
 - Begin the first response after a switch with [LANG:xx-XX], where
   xx-XX is the language code (for example, [LANG:es-ES]).
@@ -122,7 +124,7 @@ LANGUAGE DETECTION:
       audience: "builder",
       variant: "info",
       content:
-        "**This replaces the `<ConversationRelay>` element in your existing `/twiml` handler** -- don't paste it as a second route. You already have a TwiML response with `dtmfDetection`, `interruptible`, and `reportInputDuringAgentSpeech` from the reflexes chapter, plus `language`, `transcriptionProvider`, and `speechModel` from the language configuration step; this step adds new attributes (`voice`, `ttsProvider`, `interruptSensitivity`, `welcomeGreetingInterruptible`, `hints`) onto the same element and introduces `action=\"/call-ended\"` on `<Connect>`.",
+        "**This replaces the `<ConversationRelay>` element in your existing `/twiml` handler** -- don't paste it as a second route. Keep `dtmfDetection`, `interruptible`, and `reportInputDuringAgentSpeech` from the reflexes chapter, plus `language`, `transcriptionProvider`, and `speechModel` from language configuration. Add `interruptSensitivity`, `welcomeGreetingInterruptible`, and `hints` on that same element, and `action=\"/call-ended\"` on `<Connect>`. This bilingual example omits `voice` and `ttsProvider` so [Twilio uses its documented English and Spanish default voices](https://www.twilio.com/docs/voice/conversationrelay/voice-configuration#default-voice-settings). Restore a custom voice only after confirming it supports both languages.",
     },
 
     {
@@ -130,7 +132,7 @@ LANGUAGE DETECTION:
       audience: "builder",
       variant: "info",
       content:
-        "For live handoff, put a second reachable US or Canadian phone number in your Codespace's `workshop/.env`, for example `HANDOFF_PHONE_NUMBER=+14155552671` for a teammate or facilitator, then restart `npm run dev`. Use a number different from the phone receiving Call Me so the transfer can ring a person. The value must be E.164. Public Codespaces do not have a destination preconfigured; without one, the agent says live transfer is unavailable and keeps the conversation open. The workshop site's Call Me button checks the handoff destination before using the site's Twilio account; your Codespace's `/call` route uses the credentials in your `.env`. **Whichever account places the call must be upgraded for `<ConversationRelay>`**; [trial accounts block that noun](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), so verifying a phone number alone is insufficient.",
+        "For live handoff, put a second reachable US or Canadian phone number in your Codespace's `workshop/.env`, for example `HANDOFF_PHONE_NUMBER=+14155552671` for a teammate or facilitator, then restart `npm run dev`. Use a number different from the phone receiving Call Me so the transfer can ring a person. The value must be E.164. Public Codespaces do not have a destination preconfigured; without one, the agent says live transfer is unavailable and keeps the conversation open. On a site-initiated Builder call, the site checks the Codespace's `/call-ended` response when handoff is requested and allows only a US or Canadian destination before returning dialing instructions to Twilio. `npm run call` uses the credentials in your `.env`. **Whichever account places the call must be upgraded for `<ConversationRelay>`**; [trial accounts block it](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), so verifying a phone number alone is insufficient.",
     },
 
     {
@@ -138,13 +140,11 @@ LANGUAGE DETECTION:
       audience: "builder",
       language: "xml",
       file: "twiml-response",
-      highlight: [11, 12, 13],
+      highlight: [10, 12, 14],
       code: `<Response>
   <Connect action="/call-ended">
     <ConversationRelay
       url="wss://<your-server-host>/ws"
-      voice="en-US-Chirp3-HD-Aoede"
-      ttsProvider="Google"
       language="en-US"
       transcriptionProvider="Deepgram"
       speechModel="nova-3-general"
@@ -260,6 +260,13 @@ LANGUAGE DETECTION:
     { type: "section", audience: "builder", title: "Handle AI Errors Gracefully" },
 
     {
+      type: "prose",
+      audience: "builder",
+      content:
+        "This excerpt shows the error branch of your existing `streamResponse`. Keep the streaming, tool-call, interruption, and silence-timer logic from the previous chapter; do not replace the whole function with this excerpt.",
+    },
+
+    {
       type: "code",
       audience: "builder",
       language: "javascript",
@@ -267,7 +274,7 @@ LANGUAGE DETECTION:
       code: `async function streamResponse(ws, state, iteration = 0) {
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: state.conversationHistory,
       tools: tools,
       stream: true,
@@ -305,7 +312,7 @@ LANGUAGE DETECTION:
       type: "solution",
       audience: "builder",
       explanation:
-        "Both files at the end of the workshop. `tool-handlers.js` validates the live handoff destination before ending the AI session. The action URL speaks the transfer announcement once before dialing. `server.js` is the complete polished version with tool calling, interruptions, DTMF, silence detection, language switching, handoff support, and error handling. Each WebSocket connection keeps its own conversation state. When copying this complete example, keep your chosen `<ConversationRelay>` settings, including voice, provider, language, speech model, and welcome greeting; the `/twiml` values shown here are defaults.",
+        "Both files at the end of the workshop. `tool-handlers.js` validates the live handoff destination before ending the AI session. The action URL speaks the transfer announcement once before dialing. `server.js` is the complete polished version with tool calling, interruptions, DTMF, silence detection, language switching, handoff support, and error handling. Each WebSocket connection keeps its own conversation state. The runnable Twilio-Mart prompt below is a fallback; restore your own persona when copying, keeping its tool and language instructions. Keep your speech model, greeting, and other settings too. For the English/Spanish exercise, this `/twiml` example omits a fixed voice and provider so Twilio selects its documented defaults; you may restore a custom voice after verifying it in both languages.",
       files: [
         {
           file: "tool-handlers.js",
@@ -489,12 +496,19 @@ const twilioClient = twilio(
 );
 
 // --- System prompt ---
-// Paste your persona's SYSTEM_PROMPT here, layered with the
-// PERSONALITY / CAPABILITIES / BOUNDARIES / VOICE GUIDELINES / LANGUAGE
-// DETECTION structure shown in the Jake example above. Don't overwrite
-// your persona with the example verbatim.
+// This works as-is. Replace the Twilio-Mart identity with your own
+// persona, but keep the tool and language-switching instructions.
 
-const SYSTEM_PROMPT = \`<-- paste your SYSTEM_PROMPT here -->\`;
+const SYSTEM_PROMPT = \`You are a helpful voice assistant for Twilio-Mart.
+Speak warmly and naturally in one or two short sentences. Do not use markdown,
+long lists, or mention being an AI.
+Use lookup_order for order status, check_weather for weather, and
+transfer_to_agent when the caller asks for a person. Never invent tool results.
+If information is unavailable, say so and offer to transfer the caller.
+You can speak English and Spanish. Answer in the language the caller requests
+or uses. On the first reply after changing to Spanish, start with [LANG:es-ES].
+On the first reply after changing to English, start with [LANG:en-US].
+Only include a language marker when the language changes; never explain it.\`;
 
 // Each WebSocket connection gets its own conversation and timers.
 const SILENCE_TIMEOUT_MS = 8000;
@@ -548,13 +562,15 @@ async function streamResponse(ws, state, iteration = 0) {
   if (state.closed || state.ending) return;
   const controller = new AbortController();
   state.activeStream = controller;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
   let textBuffer = "";
   let fullAssistantText = "";
   let toolCalls = [];
 
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: state.conversationHistory,
       tools: tools,
       stream: true,
@@ -626,7 +642,10 @@ async function streamResponse(ws, state, iteration = 0) {
     state.conversationHistory.push({ role: "assistant", content: fallback });
   } finally {
     // A recursive tool response may already have installed a new controller.
-    if (state.activeStream === controller) state.activeStream = null;
+    if (state.activeStream === controller) {
+      state.activeStream = null;
+      resetSilenceTimer(ws, state);
+    }
   }
 }
 
@@ -710,6 +729,13 @@ function handleInterrupt(state, msg) {
   if (lastMsg?.role === "assistant" &&
       typeof msg.utteranceUntilInterrupt === "string") {
     lastMsg.content = msg.utteranceUntilInterrupt;
+  } else if (typeof msg.utteranceUntilInterrupt === "string" &&
+             msg.utteranceUntilInterrupt) {
+    // The assistant reply may not have finished streaming yet.
+    state.conversationHistory.push({
+      role: "assistant",
+      content: msg.utteranceUntilInterrupt,
+    });
   }
 }
 
@@ -767,7 +793,7 @@ async function handleDtmfInput(ws, state, digit) {
 function resetSilenceTimer(ws, state) {
   clearCallTimers(state);
   state.silencePromptCount = 0;
-  if (state.closed || state.ending) return;
+  if (state.closed || state.ending || state.activeStream || ws.readyState !== 1) return;
 
   state.silenceTimer = setTimeout(() => {
     handleSilence(ws, state);
@@ -860,13 +886,13 @@ function handleMessage(ws, state, data) {
       break;
 
     case "interrupt":
-      resetSilenceTimer(ws, state);
       handleInterrupt(state, msg);
+      resetSilenceTimer(ws, state);
       break;
 
     case "dtmf":
-      resetSilenceTimer(ws, state);
       handleDtmfInput(ws, state, msg.digit);
+      resetSilenceTimer(ws, state);
       break;
 
     case "error":
@@ -892,8 +918,6 @@ const server = http.createServer(async (req, res) => {
   <Connect action="/call-ended">
     <ConversationRelay
       url="wss://\${req.headers.host}/ws"
-      voice="en-US-Chirp3-HD-Aoede"
-      ttsProvider="Google"
       language="en-US"
       transcriptionProvider="Deepgram"
       speechModel="nova-3-general"

@@ -26,7 +26,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "**1.** `OPENAI_API_KEY` is set in `workshop/.env`. Add upgraded Twilio credentials and `MY_PHONE_NUMBER` only if you plan to call from your Codespace's `/call` route. The workshop site's Call Me button uses the site's upgraded Twilio account to reach your server.",
+        "**1.** `OPENAI_API_KEY` is set in `workshop/.env`. Add upgraded Twilio credentials and `MY_PHONE_NUMBER` only if you plan to use `npm run call` with your own account. The workshop site's Call Me button uses the site's upgraded Twilio account to reach your server.",
     },
 
     {
@@ -78,19 +78,27 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Or test your own `/call` route from the terminal. Send the request through the public tunnel so the server gives Twilio a reachable `/twiml` callback URL; a `localhost` request would give Twilio a `https://localhost` callback:",
+        "Or make a call with your own upgraded Twilio account. Open a second Codespace terminal, which starts in `workshop/`. This command reads the current public `/twiml` URL and your `workshop/.env` values. The Codespace's `/call` route is local, and the public tunnel blocks direct requests to it:",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ curl -X POST "$(tunnel-url call)"`,
+      commands: `$ npm run call`,
     },
 
     {
       type: "prose",
+      audience: "builder",
       content:
         "Your phone should ring within a few seconds. Pick up and you should hear: \"Hello! How can I help you today?\" Try asking it a question or telling it a joke.",
+    },
+
+    {
+      type: "prose",
+      audience: "explorer",
+      content:
+        "Your phone should ring within a few seconds. Pick up and listen for your agent's opening greeting. The default is: \"Hello! I'm your AI assistant. How can I help you today?\" Try asking it a question or telling it a joke.",
     },
 
     {
@@ -112,7 +120,6 @@ export default {
       audience: "builder",
       commands: `$ npm run dev
 🚀 Server listening on port 8080
-📞 Call initiated: CA1234567890abcdef1234567890abcdef
 📞 New WebSocket connection
 ✅ Call started: CA1234567890abcdef1234567890abcdef
 👤 From: +15551234567
@@ -124,7 +131,7 @@ export default {
       audience: "builder",
       variant: "warning",
       content:
-        "**Call not working?** Check: (1) `tunnel-url` prints a `trycloudflare.com` URL, (2) server is running, (3) `.env` values are set, (4) phone number is in E.164 format like `+15551234567`.",
+        "**Call not working?** Check: (1) `tunnel-url` prints a `trycloudflare.com` URL, (2) `npm run dev` is running, (3) `OPENAI_API_KEY` is set in `.env`, and (4) your phone number is in E.164 format like `+15551234567`. For `npm run call`, also check the four Twilio and phone fields in `.env`.",
     },
 
     {
@@ -137,8 +144,8 @@ export default {
         "Call connects but greeting plays then silence? The server probably isn't receiving `prompt` messages -- check that the terminal shows `🗣️ Caller: ...` logs and the WebSocket stayed open",
         "Hearing the fallback apology message? That's the OpenAI catch block -- check `OPENAI_API_KEY` and the terminal for LLM errors",
         "Call never rings? Make sure the URL ends in `/twiml`, your server logs show `POST /twiml` when you click Call Me, and the tunnel URL still resolves -- run `tunnel-url` to restart a stopped tunnel if needed",
-        "Number format must be E.164 (`+15551234567`) in both `MY_PHONE_NUMBER` and the Call Me input",
-        "If the call connects but ConversationRelay does not start, confirm with the facilitator that the site's Twilio account is upgraded. Twilio trials block ConversationRelay even when your phone number is verified. Your Codespace's own `/call` route also needs an upgraded account",
+        "Number format must be E.164 (`+15551234567`) in the Call Me input; set `MY_PHONE_NUMBER` in the same format if using `npm run call`",
+        "If the call connects but ConversationRelay does not start, confirm with the facilitator that the site's Twilio account is upgraded. Twilio trials block ConversationRelay even when your phone number is verified. `npm run call` also needs an upgraded account",
       ],
     },
 

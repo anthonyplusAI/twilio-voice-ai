@@ -56,13 +56,13 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "The site's Call Me button places the call from the site's upgraded Twilio account. You can also start a call from your Codespace's own upgraded Twilio account after setting `MY_PHONE_NUMBER` and the Twilio values in `workshop/.env`. [Trial accounts block ConversationRelay](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), even for a verified recipient. Either route uses the `server.js` code you just saved:",
+        "The site's Call Me button places the call from the site's upgraded Twilio account. You can also start a call from your Codespace's own upgraded Twilio account after setting `MY_PHONE_NUMBER` and the Twilio values in `workshop/.env`. Open a second Codespace terminal for the command below. [Trial accounts block ConversationRelay](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), even for a verified recipient. Either path uses the latest `server.js` code you just saved:",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: '$ curl -X POST "$(tunnel-url call)"',
+      commands: `$ npm run call`,
     },
 
     { type: "demo-script" },

@@ -56,7 +56,7 @@ async function startServer({ token = authToken, origin = publicBaseUrl } = {}) {
   app.stdout.on("data", (chunk) => { output += chunk; });
   app.stderr.on("data", (chunk) => { output += chunk; });
 
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 180; i++) {
     if (app.exitCode !== null) break;
     try {
       const response = await fetch(`${httpUrl}/health`);
@@ -129,6 +129,24 @@ test("a signature for the configured public WSS URL upgrades even with forged pr
   });
   assert.equal(result.status, 101);
   result.ws.close();
+});
+
+test("a signature for the public WSS URL with a trailing slash upgrades", async () => {
+  const result = await attemptUpgrade(protectedServer, {
+    headers: { "X-Twilio-Signature": signed(`${canonicalWebSocketUrl}/`) },
+  });
+  assert.equal(result.status, 101);
+  result.ws.close();
+});
+
+test("a trailing-slash signature for a forged public host receives 403", async () => {
+  const result = await attemptUpgrade(protectedServer, {
+    headers: {
+      Host: "attacker.example",
+      "X-Twilio-Signature": signed("wss://attacker.example/ws/"),
+    },
+  });
+  assert.equal(result.status, 403);
 });
 
 test("a signature for the correct host but wrong WebSocket scheme receives 403", async () => {

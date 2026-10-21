@@ -242,7 +242,7 @@ function validateRelayAttributes(input, sourceHost = null) {
         if (!TOKEN_PATTERN.test(value)) fail("invalid " + name + " attribute");
         break;
       case "ttsProvider":
-        if (!["Amazon", "Deepgram", "ElevenLabs", "Google"].includes(value)) {
+        if (!["Amazon", "ElevenLabs", "Google"].includes(value)) {
           fail("invalid ttsProvider attribute");
         }
         break;

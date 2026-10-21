@@ -113,6 +113,7 @@ function makeHarness(code, { respond = () => [
           signal: options?.signal,
         });
         const chunks = await respond(completions.length);
+        if (chunks?.[Symbol.asyncIterator]) return chunks;
         return (async function* () { for (const chunk of chunks) yield chunk; })();
       } } };
     }
@@ -269,11 +270,16 @@ for (const [name, { code }] of Object.entries(loaded)) {
     assert.doesNotThrow(() => new vm.Script(code, { filename: `${name}-server.js` }));
   });
 
-  test(`${name} keeps Chapter 3 voice and transcription settings`, () => {
+  test(`${name} keeps the intended voice and transcription settings`, () => {
     const app = makeHarness(code);
     const twiml = app.twiml();
-    assert.match(twiml, /voice="21m00Tcm4TlvDq8ikWAM"/);
-    assert.match(twiml, /ttsProvider="ElevenLabs"/);
+    if (name === "language") {
+      assert.doesNotMatch(twiml, /\bvoice=/);
+      assert.doesNotMatch(twiml, /\bttsProvider=/);
+    } else {
+      assert.match(twiml, /voice="21m00Tcm4TlvDq8ikWAM"/);
+      assert.match(twiml, /ttsProvider="ElevenLabs"/);
+    }
     assert.match(twiml, /language="en-US"/);
     assert.match(twiml, /transcriptionProvider="Deepgram"/);
     assert.match(twiml, /speechModel="nova-3-general"/);
@@ -353,6 +359,132 @@ for (const [name, { code }] of Object.entries(loaded)) {
 }
 
 for (const name of ["silence", "language"]) {
+  test(`${name} guided stream pauses and resumes the silence timer`, async () => {
+    const clock = makeClock();
+    const ws = { readyState: 1, messages: [], send(raw) { this.messages.push(JSON.parse(raw)); } };
+    const state = {
+      activeStream: null,
+      silenceTimer: null,
+      closed: false,
+      conversationHistory: [{ role: "system", content: "test persona" }],
+    };
+    let finishAnswer;
+    const pendingAnswer = new Promise(resolve => { finishAnswer = resolve; });
+    const resetSilenceTimer = () => {
+      clock.clearTimeout(state.silenceTimer);
+      state.silenceTimer = clock.setTimeout(() => {
+        ws.send(JSON.stringify({ type: "text", token: "Are you still there?" }));
+      }, 8000);
+    };
+    const context = {
+      stateFor: () => state,
+      openai: { chat: { completions: { create: () => pendingAnswer } } },
+      process: { env: {} },
+      sendText: (_ws, token) => ws.send(JSON.stringify({ type: "text", token })),
+      processLLMResponse: (_ws, token) => ws.send(JSON.stringify({ type: "text", token })),
+      resetSilenceTimer,
+      clearTimeout: clock.clearTimeout,
+      AbortController,
+      console: { error() {} },
+    };
+    const { streamResponse } = vm.runInNewContext(
+      `${guideCode(name, "async function streamResponse")}\n({ streamResponse })`,
+      context,
+    );
+    resetSilenceTimer();
+    const response = streamResponse(ws);
+    clock.advance(16000);
+    assert.equal(ws.messages.length, 0);
+    finishAnswer((async function* () {
+      yield { choices: [{ delta: { content: "Your order shipped." }, finish_reason: null }] };
+    })());
+    await response;
+    assert.ok(ws.messages.some(message => /Your order shipped/.test(message.token)));
+    clock.advance(8000);
+    assert.equal(ws.messages.filter(message => /still there/i.test(message.token)).length, 1);
+  });
+
+  test(`${name} remembers the spoken part of an interrupted stream`, async () => {
+    let releaseFirstStream;
+    const holdFirstStream = new Promise(resolve => { releaseFirstStream = resolve; });
+    const app = makeHarness(loaded[name].code, {
+      respond: number => number === 1
+        ? (async function* () {
+          yield { choices: [{ delta: { content: "I found your order. " }, finish_reason: null }] };
+          await holdFirstStream;
+        })()
+        : [{ choices: [{ delta: { content: "A new answer." }, finish_reason: null }] }],
+    });
+    const ws = app.socket();
+    ws.receive({ type: "prompt", voicePrompt: "Where is my order?", last: true });
+    await settle();
+    assert.ok(ws.messages.some(message => message.type === "text" && /I found your order/.test(message.token)));
+    ws.receive({ type: "interrupt", utteranceUntilInterrupt: "I found your order." });
+    ws.receive({ type: "prompt", voicePrompt: "Actually, tell me something else.", last: true });
+    await settle();
+    const secondHistory = app.completions[1].messages;
+    assert.ok(secondHistory.some(message => message.role === "assistant" && message.content === "I found your order."));
+    releaseFirstStream();
+    await settle();
+    ws.close();
+  });
+
+  test(`${name} does not nudge during a slow answer and waits eight seconds after it ends`, async () => {
+    let finishAnswer;
+    const pendingAnswer = new Promise(resolve => { finishAnswer = resolve; });
+    const app = makeHarness(loaded[name].code, { respond: () => pendingAnswer });
+    const ws = app.socket();
+    ws.receive({ type: "setup", callSid: "CA123" });
+    ws.receive({ type: "prompt", voicePrompt: "Tell me about my order", last: true });
+    app.clock.advance(4000);
+    ws.receive({ type: "prompt", voicePrompt: "Wait, one more thing", last: false });
+    app.clock.advance(12000);
+    assert.equal(ws.messages.filter(message => message.type === "text").length, 0);
+
+    finishAnswer([{ choices: [{ delta: { content: "Your order is on its way." }, finish_reason: null }] }]);
+    await settle();
+    assert.ok(ws.messages.some(message => message.type === "text" && /Your order/.test(message.token)));
+
+    app.clock.advance(7999);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 0);
+    app.clock.advance(1);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 1);
+    ws.close();
+  });
+
+  test(`${name} counts caller silence after an interruption`, async () => {
+    let finishAnswer;
+    const pendingAnswer = new Promise(resolve => { finishAnswer = resolve; });
+    const app = makeHarness(loaded[name].code, { respond: () => pendingAnswer });
+    const ws = app.socket();
+    ws.receive({ type: "setup", callSid: "CA123" });
+    ws.receive({ type: "prompt", voicePrompt: "Tell me about my order", last: true });
+    app.clock.advance(4000);
+    ws.receive({ type: "interrupt", utteranceUntilInterrupt: "" });
+    app.clock.advance(7999);
+    assert.equal(ws.messages.filter(message => message.type === "text").length, 0);
+    app.clock.advance(1);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 1);
+    finishAnswer([{ choices: [{ delta: { content: "An obsolete reply." }, finish_reason: null }] }]);
+    await settle();
+    assert.equal(ws.messages.filter(message => message.type === "text" && /obsolete/i.test(message.token)).length, 0);
+    ws.close();
+  });
+
+  test(`${name} restarts the silence timer after an AI error fallback`, async () => {
+    const app = makeHarness(loaded[name].code, {
+      respond: () => { throw new Error("model unavailable"); },
+    });
+    const ws = app.socket();
+    ws.receive({ type: "setup", callSid: "CA123" });
+    ws.receive({ type: "prompt", voicePrompt: "Tell me about my order", last: true });
+    await settle();
+    assert.ok(ws.messages.some(message => message.type === "text" && /technical issue/i.test(message.token)));
+    app.clock.advance(8000);
+    assert.equal(ws.messages.filter(message => message.type === "text" && /still there/i.test(message.token)).length, 1);
+    ws.close();
+  });
+
   test(`${name} nudges twice and lets the farewell play before ending`, () => {
     const app = makeHarness(loaded[name].code);
     const ws = app.socket();

@@ -1,8 +1,16 @@
+// Keep these codes aligned with the Explorer language picker and its TwiML
+// <Language> mappings. The relay can only switch to a configured language.
+export const WORKSHOP_LANGUAGE_CODES = [
+  "en-US", "zh-CN", "fr-FR", "hi-IN", "pt-BR", "ru-RU", "es-ES",
+];
+
 export function buildSystemPrompt(config = {}) {
   const name = config.agentName || "Aria";
   const personality =
     config.personality ||
     "friendly, helpful, and conversational. You speak naturally and concisely.";
+  const initialLanguage = WORKSHOP_LANGUAGE_CODES.includes(config.initialLanguage)
+    ? config.initialLanguage : "en-US";
   const handoffEnabled = config.handoffEnabled === true;
 
   const handoffBlock = handoffEnabled
@@ -33,8 +41,11 @@ Pronunciation:
 ${handoffBlock}
 
 Language switching:
-- If the caller switches to a different language (e.g., they start speaking Spanish), respond in that language and include a language marker at the very beginning of your response.
-- The marker format is [LANG:xx-XX] where xx-XX is the BCP-47 language code. Examples: [LANG:es-ES], [LANG:fr-FR], [LANG:de-DE], [LANG:ja-JP], [LANG:pt-BR].
+- The call starts in ${initialLanguage}. Respond in that language until the caller asks for, or speaks in, another supported language.
+- You may switch among these language codes: ${WORKSHOP_LANGUAGE_CODES.join(", ")}. If asked for another language, explain which languages are available.
+- If the caller asks in English to switch to a supported language, answer in the requested language on your next response. Include the language marker even though their request was spoken in English.
+- If the caller switches to a different supported language (e.g., they start speaking Spanish), respond in that language and include a language marker at the very beginning of your response.
+- The marker format is [LANG:xx-XX] where xx-XX is the BCP-47 language code. Examples: [LANG:es-ES], [LANG:fr-FR], [LANG:pt-BR].
 - Only include the marker when switching languages, not on every response.
 - If the caller switches back to English, include [LANG:en-US] at the start of that response.`;
 }

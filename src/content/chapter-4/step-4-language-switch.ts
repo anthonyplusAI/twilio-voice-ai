@@ -9,14 +9,22 @@ export default {
       audience: "explorer",
       title: "Switching Languages Mid-Call",
       content:
-        "Some callers start in one language and slide into another -- maybe they're more comfortable in Spanish, or they switch between English and Mandarin at home. Conversation Relay can flip both the listening and speaking language on the fly, without dropping the call. It's a small feature with a huge accessibility payoff.",
+        "Some callers start in one language and then ask to speak another -- maybe they're more comfortable in Spanish, or they switch between English and Mandarin at home. When the agent detects that request, Conversation Relay can change both its listening and speaking language during the call. It's a small feature with a huge accessibility payoff.",
+    },
+
+    {
+      type: "callout",
+      audience: "explorer",
+      variant: "info",
+      content:
+        "Your chosen English voice may sound different after you switch to Spanish. Some presets support English only, so the workshop uses a compatible Spanish voice for that part of the call.",
     },
 
     {
       type: "prose",
       audience: "builder",
       content:
-        "Conversation Relay can switch languages **mid-call** -- both the speech-to-text side (understanding the caller) and the text-to-speech side (the voice the caller hears). If a caller switches from English to Spanish, the agent adapts instantly without dropping the call.",
+        "Conversation Relay can switch languages **mid-call** -- both the speech-to-text side (understanding the caller) and the text-to-speech side (the voice the caller hears). Your server decides when to send that switch. For a reliable first test, ask in English to switch to Spanish, then continue in Spanish after the agent changes language.",
     },
 
     {
@@ -34,7 +42,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "To switch languages, send a `language` message over the WebSocket. Twilio immediately updates both how it listens and which voice it uses:",
+        "To switch languages, send a `language` message over the WebSocket. Twilio applies the new speech recognition and text-to-speech languages to subsequent turns:",
     },
 
     {
@@ -56,6 +64,14 @@ export default {
         "Each field is individually optional, but **at least one must be present**. You could keep transcription in English while switching just the speaking voice, but for almost every real caller the STT and TTS languages should move together -- otherwise the agent hears Spanish and answers in an English voice, or vice versa. The implementation below sends both fields on every switch for that reason.",
     },
 
+    {
+      type: "callout",
+      audience: "builder",
+      variant: "info",
+      content:
+        "**Prepare your existing `/twiml` response for two languages.** Remove its fixed `voice=\"...\"` and `ttsProvider=\"...\"` attributes; keep your greeting, `language=\"en-US\"`, Deepgram transcription, and reflex settings. [Twilio documents default ElevenLabs voices for both `en-US` and `es-ES`](https://www.twilio.com/docs/voice/conversationrelay/voice-configuration#default-voice-settings), so each language has a compatible voice after the switch. This replaces the custom voice chosen in Chapter 3 for the bilingual exercise. If your chosen voice supports both languages, you can restore it after testing; custom voices for each language require Twilio's nested `<Language>` configuration, which the workshop site's shared Call Me flow does not accept.",
+    },
+
     { type: "page-break" },
 
     { type: "section", title: "Detecting Language Switches", audience: "builder" },
@@ -64,7 +80,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "The LLM is the best tool for detecting language changes. When a caller switches to Spanish, the transcribed text contains Spanish words. Replace your existing `SYSTEM_PROMPT` declaration with a version that keeps your chosen persona and adds the language instructions below. `conversationHistory` already uses `SYSTEM_PROMPT`, so do not paste a second prompt variable beside it:",
+        "The LLM can decide when to switch after reading the caller's transcription. With `language=\"en-US\"`, an unannounced first Spanish phrase may be transcribed poorly, so have the caller ask in English to switch to Spanish for the workshop test. Replace your existing `SYSTEM_PROMPT` declaration with a version that keeps your chosen persona and adds the language instructions below. `conversationHistory` already uses `SYSTEM_PROMPT`, so do not paste a second prompt variable beside it:",
     },
 
     {
@@ -81,6 +97,8 @@ If you don't know something, say so honestly.
 
 LANGUAGE DETECTION:
 - You can speak English and Spanish fluently.
+- If the caller asks to switch languages, answer in the requested language
+  on your next response, even when the request was spoken in English.
 - If the caller switches to a different language, respond in that language.
 - When you detect a language switch, include the marker [LANG:xx-XX]
   at the very beginning of your response, where xx-XX is the BCP-47
@@ -175,7 +193,7 @@ function processLLMResponse(ws, text) {
       audience: "builder",
       variant: "warning",
       content:
-        "The language switch takes effect immediately. Send the `language` message **before** sending the text that should be spoken in the new language. Otherwise Twilio will try to speak Spanish text with an English voice, which sounds garbled.",
+        "Send the `language` message **before** sending the text that should be spoken in the new language. Otherwise Twilio may synthesize Spanish text with the previous English language settings, which can sound wrong.",
     },
 
     { type: "page-break" },
@@ -186,7 +204,7 @@ function processLLMResponse(ws, text) {
       type: "prose",
       audience: "builder",
       content:
-        "**Replace your existing `streamResponse` with this version.** The old one sent every token to Twilio the moment it arrived, which would speak the `[LANG:xx-XX]` marker out loud before the helper had a chance to strip it. The fix is to buffer tokens until a sentence ends, then run each full sentence through `processLLMResponse` before speaking it.",
+        "**Replace your existing `streamResponse` with this version.** The old one sent every token to Twilio the moment it arrived, which would speak the `[LANG:xx-XX]` marker out loud before the helper had a chance to strip it. Buffer tokens until a sentence ends, then run each full sentence through `processLLMResponse` before speaking it. Keep the silence countdown paused throughout this reply and restart it when the reply ends.",
     },
 
     {
@@ -208,10 +226,12 @@ function processLLMResponse(ws, text) {
   state.activeStream?.abort();
   const controller = new AbortController();
   state.activeStream = controller;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
 
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: state.conversationHistory,
       stream: true,
     }, { signal: controller.signal });
@@ -256,7 +276,10 @@ function processLLMResponse(ws, text) {
     sendText(ws, apology, true);
     state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    if (state.activeStream === controller) state.activeStream = null;
+    if (state.activeStream === controller) {
+      state.activeStream = null;
+      resetSilenceTimer(ws);
+    }
   }
 }`,
     },
@@ -275,7 +298,7 @@ function processLLMResponse(ws, text) {
       type: "prose",
       audience: "builder",
       content:
-        "Conversation Relay supports a wide range of BCP-47 language codes. Some commonly used ones -- pass any of these values as the `ttsLanguage` or `transcriptionLanguage` in the `language` message:",
+        "Conversation Relay supports a wide range of BCP-47 language codes. These are common examples for the `language` message; check that your selected speech and voice providers support a code before using it:",
     },
 
     {
@@ -312,7 +335,7 @@ function processLLMResponse(ws, text) {
       file: "server.js",
       language: "javascript",
       explanation:
-        "Builds on the previous step by adding a LANGUAGE DETECTION section to the system prompt, a LANG_MARKER_REGEX constant, currentLanguage tracking from Twilio's first final `prompt.lang`, and a processLLMResponse function that sends language switches. streamResponse buffers tokens into whole sentences so the marker is stripped before speech. When copying this complete example, keep your chosen `<ConversationRelay>` settings from Chapter 3, including voice, provider, language, speech model, and welcome greeting; the `/twiml` values shown here are defaults.",
+        "Builds on the previous step by adding a LANGUAGE DETECTION section to the system prompt, a LANG_MARKER_REGEX constant, currentLanguage tracking from Twilio's first final `prompt.lang`, and a processLLMResponse function that sends language switches. streamResponse buffers tokens into whole sentences so the marker is stripped before speech. This bilingual `/twiml` example keeps the greeting and recognition settings but omits a fixed voice and TTS provider, letting Twilio select its documented defaults for English and Spanish. Preserve your own persona and other settings; restore a custom voice only after confirming it works in both languages.",
       code: `require("dotenv").config();
 const { WebSocketServer } = require("ws");
 const http = require("http");
@@ -338,6 +361,8 @@ If you don't know something, say so honestly.
 
 LANGUAGE DETECTION:
 - You can speak English and Spanish fluently.
+- If the caller asks to switch languages, answer in the requested language
+  on your next response, even when the request was spoken in English.
 - If the caller switches to a different language, respond in that language.
 - When you detect a language switch, include the marker [LANG:xx-XX]
   at the very beginning of your response, where xx-XX is the BCP-47
@@ -379,10 +404,12 @@ async function streamResponse(ws) {
   state.activeStream?.abort();
   const controller = new AbortController();
   state.activeStream = controller;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
 
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: state.conversationHistory,
       stream: true,
     }, { signal: controller.signal });
@@ -415,7 +442,10 @@ async function streamResponse(ws) {
     sendText(ws, apology, true);
     state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    if (state.activeStream === controller) state.activeStream = null;
+    if (state.activeStream === controller) {
+      state.activeStream = null;
+      resetSilenceTimer(ws);
+    }
   }
 }
 
@@ -504,9 +534,10 @@ function resetSilenceTimer(ws) {
   const state = stateFor(ws);
   clearTimeout(state.silenceTimer);
   clearTimeout(state.endTimer);
-  if (state.closed || ws.readyState !== 1) return;
-  state.silencePromptCount = 0;
+  state.silenceTimer = null;
   state.endTimer = null;
+  if (state.closed || state.activeStream || ws.readyState !== 1) return;
+  state.silencePromptCount = 0;
   state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
 }
 
@@ -556,8 +587,8 @@ function handleMessage(ws, data) {
       break;
 
     case "interrupt":
-      resetSilenceTimer(ws);
       handleInterrupt(ws, msg);
+      resetSilenceTimer(ws);
       break;
 
     case "dtmf":
@@ -578,8 +609,6 @@ const server = http.createServer(async (req, res) => {
   <Connect>
     <ConversationRelay
       url="wss://\${req.headers.host}/ws"
-      voice="21m00Tcm4TlvDq8ikWAM"
-      ttsProvider="ElevenLabs"
       language="en-US"
       transcriptionProvider="Deepgram"
       speechModel="nova-3-general"
@@ -652,7 +681,7 @@ server.listen(PORT, () => {
       audience: "explorer",
       title: "What It Sounds Like to the Caller",
       content:
-        "On the test call coming up next: if you speak Spanish, start in English and switch mid-sentence. If you don't, read this phrase out loud -- *\"Hola, ¿cómo estás?\"* (roughly *\"OH-lah, KOH-moh es-TAHS\"*). Either way the agent keeps the same tone but flips to a Spanish voice that sounds natural in that language. No menu, no \"press 2 for Spanish\" -- the change happens the moment the agent hears the shift, and flips back when you return to English.",
+        "On the test call coming up next, ask in English, *\"Could we switch to Spanish?\"* After the agent changes languages, say *\"Hola, ¿cómo estás?\"* (roughly *\"OH-lah, KOH-moh es-TAHS\"*). The agent should answer in Spanish. This clear request gives the language switch a better chance than beginning with Spanish while speech recognition is still set to English. You can ask to return to English later in the same call.",
     },
   ],
 } satisfies StepDefinition;

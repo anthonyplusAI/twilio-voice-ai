@@ -57,13 +57,13 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Or trigger your own `/call` endpoint from the terminal. Send the request through the public tunnel so the server gives Twilio a reachable callback URL:",
+        "Or make a call with your own upgraded Twilio account. Open a second Codespace terminal and run the local command, which uses your current public `/twiml` URL; the public tunnel blocks direct `/call` requests:",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ curl -X POST "$(tunnel-url call)"`,
+      commands: `$ npm run call`,
     },
 
     { type: "page-break" },

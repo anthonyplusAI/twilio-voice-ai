@@ -131,18 +131,21 @@ test("Explorer TwiML preserves an explicit empty tool selection", async () => {
   assert.match(await response.text(), /<Parameter name="enabledTools" value=""\s*\/>/);
 });
 
-test("Explorer lets Twilio choose the default voice for an unselected Spanish voice", async () => {
+test("Explorer chooses Twilio's published Spanish default for an unselected voice", async () => {
   const response = await fetch(`${baseUrl}/api/twiml?language=es-ES`, { method: "POST" });
   assert.equal(response.status, 200);
   const xml = await response.text();
   assert.match(xml, /language="es-ES"/);
-  assert.doesNotMatch(xml, /\svoice=/);
+  assert.match(xml, /<ConversationRelay\b[^>]*voice="6xftrpatV0jGmFHxDjUv"/);
+  assert.match(xml, /welcomeGreeting="¡Hola!/);
 });
 
-test("Explorer keeps an explicitly selected voice", async () => {
+test("Explorer keeps an explicitly selected voice outside the curated picker for its starting language", async () => {
   const response = await fetch(`${baseUrl}/api/twiml?language=es-ES&voice=es-ES-Neural2-H&ttsProvider=Google`, { method: "POST" });
   assert.equal(response.status, 200);
-  assert.match(await response.text(), /voice="es-ES-Neural2-H"/);
+  const xml = await response.text();
+  assert.match(xml, /<ConversationRelay\b[^>]*voice="es-ES-Neural2-H"/);
+  assert.match(xml, /<Language code="es-ES" ttsProvider="Google" voice="es-ES-Neural2-H"/);
 });
 
 test("A missing handoff destination never dials the sample phone number", async () => {

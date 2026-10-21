@@ -30,7 +30,7 @@ export const WORKSHOP_LANGUAGES: Array<{ code: string; label: string }> = [
   { code: "es-ES", label: "Spanish (Spain)" },
 ];
 
-export type VoiceProvider = "ElevenLabs" | "Google" | "Amazon Polly";
+export type VoiceProvider = "ElevenLabs" | "Google" | "Amazon";
 
 export type VoiceEntry = {
   id: string;
@@ -161,7 +161,7 @@ export const VOICE_CATALOG: VoiceEntry[] = [
   {
     id: "Joanna-Neural",
     name: "Joanna",
-    provider: "Amazon Polly",
+    provider: "Amazon",
     gender: "Female",
     languages: [ENGLISH_ONLY_LANG_CODE],
     type: "Neural",
@@ -169,7 +169,7 @@ export const VOICE_CATALOG: VoiceEntry[] = [
   {
     id: "Matthew-Neural",
     name: "Matthew",
-    provider: "Amazon Polly",
+    provider: "Amazon",
     gender: "Male",
     languages: [ENGLISH_ONLY_LANG_CODE],
     type: "Neural",

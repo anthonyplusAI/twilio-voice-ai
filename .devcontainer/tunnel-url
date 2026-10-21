@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROUTE="${1:-twiml}"
-if [[ $# -gt 1 || ( "$ROUTE" != "twiml" && "$ROUTE" != "call" ) ]]; then
-  echo "Usage: tunnel-url [twiml|call]" >&2
+if [[ $# -gt 1 || "$ROUTE" != "twiml" ]]; then
+  echo "Usage: tunnel-url [twiml]" >&2
   exit 2
 fi
 

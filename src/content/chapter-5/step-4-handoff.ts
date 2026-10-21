@@ -139,19 +139,18 @@ export default {
       audience: "builder",
       language: "xml",
       file: "twiml-response",
-      highlight: [6],
+      highlight: [8],
       code: `<!-- The only change vs. your existing TwiML is the new action="/call-ended"
-     on <Connect>. Keep every other attribute you already have — voice,
-     ttsProvider, welcomeGreeting, language, interruptible, etc. — untouched;
-     the snippet below just shows where the new attribute goes. The
-     Chirp3 / Google values are example placeholders only — do NOT swap
-     the voice and ttsProvider picks you made earlier for these. -->
+     on <Connect>. Keep your existing welcomeGreeting, language,
+     interruptible, and other attributes; the snippet below only shows
+     where the new action goes. If you followed the bilingual Chapter 4
+     exercise, leave voice and ttsProvider unset so Twilio chooses its
+     default voice for each language. -->
 <Response>
   <Connect action="/call-ended">
     <ConversationRelay
       url="wss://<your-server-host>/ws"
-      voice="en-US-Chirp3-HD-Aoede"
-      ttsProvider="Google"
+      language="en-US"
       welcomeGreeting="Hi, I'm your assistant. How can I help?"
       dtmfDetection="true"
       interruptible="any"
@@ -173,7 +172,7 @@ export default {
       audience: "builder",
       variant: "info",
       content:
-        "Add a second reachable US or Canadian phone number to your Codespace's `workshop/.env`, for example `HANDOFF_PHONE_NUMBER=+14155552671` for a teammate or facilitator. Use a number different from the phone receiving Call Me so the transfer can ring a person. It must be in E.164 format. Public Codespaces do not have this value preconfigured. Restart `npm run dev` after editing `.env` so the server loads it. Without a valid number, the agent will say live transfer is unavailable; the action URL also refuses to dial a placeholder. The workshop site's Call Me button checks this handoff destination before using the site's Twilio account; your Codespace's `/call` route uses the credentials in your `.env`. **Whichever account places the call must be upgraded for `<ConversationRelay>`**; [trial accounts block that noun](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), so verifying a phone number alone is insufficient. In production, you can replace the single number with a SIP endpoint or TaskRouter routing.",
+        "Add a second reachable US or Canadian phone number to your Codespace's `workshop/.env`, for example `HANDOFF_PHONE_NUMBER=+14155552671` for a teammate or facilitator. Use a number different from the phone receiving Call Me so the transfer can ring a person. It must be in E.164 format. Public Codespaces do not have this value preconfigured. Restart `npm run dev` after editing `.env` so the server loads it. Without a valid number, the agent will say live transfer is unavailable; the action URL also refuses to dial a placeholder. On a site-initiated Builder call, the site checks the Codespace's `/call-ended` response when handoff is requested and allows only a US or Canadian destination before returning dialing instructions to Twilio. `npm run call` uses the Twilio credentials in your `.env`. **Whichever account places the call must be upgraded for `<ConversationRelay>`**; [trial accounts block it](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), so verifying a phone number alone is insufficient. In production, you can replace the single number with a SIP endpoint or TaskRouter routing.",
     },
 
     {
@@ -367,7 +366,7 @@ if (state.closed || state.transferring) return;`,
       type: "prose",
       audience: "builder",
       content:
-        "Make keypad option 2 call that same handler. The older DTMF menu only *said* it would transfer; it never sent `end`. Change `handleDtmfInput` to `async function handleDtmfInput(ws, digit)`, then replace its `case \"2\"` with the block below. It stops any reply already streaming and checks the configured destination before sending handoff data. The existing `handleMessage` call can stay as it is.",
+        "Make keypad option 2 call that same handler. The older DTMF menu only *said* it would transfer; it never sent `end`. Change `handleDtmfInput` to `async function handleDtmfInput(ws, digit)`, then replace its `case \"2\"` with the block below. It stops any reply already streaming, pauses the silence countdown while the transfer check runs, and checks the configured destination before sending handoff data. The existing `handleMessage` call can stay as it is.",
     },
 
     {
@@ -379,6 +378,8 @@ if (state.closed || state.transferring) return;`,
   const state = stateFor(ws);
   state.activeStream?.abort();
   state.activeStream = null;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
   try {
     const result = await toolHandlers.transfer_to_agent({
       reason: "caller selected keypad option 2",
@@ -421,7 +422,7 @@ if (state.closed || state.transferring) return;`,
       type: "solution",
       audience: "builder",
       explanation:
-        "Both files at the end of this step. `tool-handlers.js` adds the `transfer_to_agent` tool and handler alongside the earlier tools. `server.js` stops the LLM loop after handoff, sends keypad option 2 through that handler, adds `action=\"/call-ended\"` on `<Connect>`, and only dials a configured E.164 number from the `/call-ended` route. When copying this complete example, keep your chosen `<ConversationRelay>` settings from Chapter 3, including voice, provider, language, speech model, and welcome greeting; the `/twiml` values shown here are defaults.",
+        "Both files at the end of this step. `tool-handlers.js` adds the `transfer_to_agent` tool and handler alongside the earlier tools. `server.js` stops the LLM loop after handoff, sends keypad option 2 through that handler, adds `action=\"/call-ended\"` on `<Connect>`, and only dials a configured E.164 number from the `/call-ended` route. Keep your persona, language, speech model, greeting, and other settings when copying. For the bilingual Chapter 4 path, this complete `/twiml` example leaves out a fixed voice and TTS provider so Twilio selects its English or Spanish default; restore a custom voice only after verifying it in both languages.",
       files: [
         {
           file: "tool-handlers.js",
@@ -612,6 +613,8 @@ If you don't know something, say so honestly.
 
 LANGUAGE DETECTION:
 - You can speak English and Spanish fluently.
+- If the caller asks to switch languages, answer in the requested language
+  on your next response, even when the request was spoken in English.
 - If the caller switches to a different language, respond in that language.
 - When you detect a language switch, include the marker [LANG:xx-XX]
   at the very beginning of your response, where xx-XX is the BCP-47
@@ -656,10 +659,12 @@ async function streamResponse(ws, iteration = 0) {
   state.activeStream?.abort();
   const controller = new AbortController();
   state.activeStream = controller;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
 
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: state.conversationHistory,
       tools,
       stream: true,
@@ -728,7 +733,10 @@ async function streamResponse(ws, iteration = 0) {
     sendText(ws, apology, true);
     state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    if (state.activeStream === controller) state.activeStream = null;
+    if (state.activeStream === controller) {
+      state.activeStream = null;
+      resetSilenceTimer(ws);
+    }
   }
 }
 
@@ -842,6 +850,8 @@ async function handleDtmfInput(ws, digit) {
       const state = stateFor(ws);
       state.activeStream?.abort();
       state.activeStream = null;
+      clearTimeout(state.silenceTimer);
+      state.silenceTimer = null;
       try {
         const result = await toolHandlers.transfer_to_agent({
           reason: "caller selected keypad option 2",
@@ -906,9 +916,10 @@ function resetSilenceTimer(ws) {
   const state = stateFor(ws);
   clearTimeout(state.silenceTimer);
   clearTimeout(state.endTimer);
-  if (state.closed || state.transferring || ws.readyState !== 1) return;
-  state.silencePromptCount = 0;
+  state.silenceTimer = null;
   state.endTimer = null;
+  if (state.closed || state.transferring || state.activeStream || ws.readyState !== 1) return;
+  state.silencePromptCount = 0;
   state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
 }
 
@@ -960,8 +971,8 @@ function handleMessage(ws, data) {
       break;
 
     case "interrupt":
-      resetSilenceTimer(ws);
       handleInterrupt(ws, msg);
+      resetSilenceTimer(ws);
       break;
 
     case "dtmf":
@@ -982,8 +993,6 @@ const server = http.createServer(async (req, res) => {
   <Connect action="/call-ended">
     <ConversationRelay
       url="wss://\${req.headers.host}/ws"
-      voice="21m00Tcm4TlvDq8ikWAM"
-      ttsProvider="ElevenLabs"
       language="en-US"
       transcriptionProvider="Deepgram"
       speechModel="nova-3-general"

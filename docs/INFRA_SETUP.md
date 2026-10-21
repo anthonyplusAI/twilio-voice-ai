@@ -53,6 +53,9 @@ to low-risk **United States/Canada** only, with both high-risk categories off.
 Twilio calls this combined entry `US`. This is an account setting, so the Azure
 setup script does not change it; verify it again before a group event or when
 switching Twilio accounts.
+In the same account, accept the [Conversation Relay AI/ML features
+addendum](https://www.twilio.com/docs/voice/conversationrelay/onboarding#configuration-steps-in-the-twilio-console)
+in Voice settings before the first call.
 
 GitHub **variables**: `ACR_NAME`, `ACA_NAME`, `ACA_RESOURCE_GROUP`.
 GitHub **secrets**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,

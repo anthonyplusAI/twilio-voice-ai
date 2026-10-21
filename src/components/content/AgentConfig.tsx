@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useProgressContext } from "@/components/layout/ProgressContext";
+import { resolveExplorerGreeting } from "@/lib/explorer-greeting";
 
 const PERSONA_PRESETS = [
   {
@@ -43,20 +44,22 @@ const PERSONA_PRESETS = [
 
 export function AgentConfig() {
   const { progress, updateWorkshopState } = useProgressContext();
-  const [customName, setCustomName] = useState(
-    progress.workshopState.agentName || ""
-  );
-  const [customPersonality, setCustomPersonality] = useState(
-    progress.workshopState.personality || ""
-  );
-  const [customGreeting, setCustomGreeting] = useState(
-    progress.workshopState.welcomeGreeting || ""
-  );
+  // Saved progress loads after the first render. Keep only edits locally so a
+  // revisited step shows the hydrated values without replacing text in flight.
+  const [editedName, setCustomName] = useState<string | null>(null);
+  const [editedPersonality, setCustomPersonality] = useState<string | null>(null);
+  const [editedGreeting, setCustomGreeting] = useState<string | null>(null);
+  const customName = editedName ?? progress.workshopState.agentName ?? "";
+  const customPersonality = editedPersonality ?? progress.workshopState.personality ?? "";
+  const savedGreeting = progress.workshopState.welcomeGreeting;
+  const customGreeting = editedGreeting ?? (savedGreeting
+    ? resolveExplorerGreeting(savedGreeting, progress.workshopState.language || "en-US")
+    : "");
 
   function applyPreset(preset: (typeof PERSONA_PRESETS)[number]) {
-    setCustomName(preset.name);
-    setCustomPersonality(preset.personality);
-    setCustomGreeting(preset.greeting);
+    setCustomName(null);
+    setCustomPersonality(null);
+    setCustomGreeting(null);
     updateWorkshopState({
       agentName: preset.name,
       personality: preset.personality,
@@ -74,6 +77,9 @@ export function AgentConfig() {
       personality: customPersonality.trim(),
       welcomeGreeting: customGreeting.trim(),
     });
+    setCustomName(null);
+    setCustomPersonality(null);
+    setCustomGreeting(null);
   }
 
   const activePreset = PERSONA_PRESETS.find(
@@ -95,7 +101,7 @@ export function AgentConfig() {
     !!activePreset &&
     (customName.trim() !== activePreset.name ||
       customPersonality.trim() !== activePreset.personality ||
-      customGreeting.trim() !== activePreset.greeting);
+      resolveExplorerGreeting(customGreeting, "en-US") !== activePreset.greeting);
   const isCustom =
     (hasSavedValues && !activePreset) || customDiffersFromPreset;
 

@@ -41,7 +41,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Conversation Relay does not send a dedicated \"silence\" message. Instead, the server watches the clock -- if the caller has not spoken for a set amount of time, it can nudge them or gracefully end the call.",
+        "Conversation Relay does not send a dedicated \"silence\" message. Instead, the server watches the clock while it is waiting for the caller. Pause that clock while the AI prepares and sends its reply; otherwise a slow response could trigger a nudge before the caller has a chance to answer.",
     },
 
     {
@@ -58,9 +58,10 @@ function resetSilenceTimer(ws) {
   const state = stateFor(ws);
   clearTimeout(state.silenceTimer);
   clearTimeout(state.endTimer);
-  if (state.closed || ws.readyState !== 1) return;
-  state.silencePromptCount = 0;
+  state.silenceTimer = null;
   state.endTimer = null;
+  if (state.closed || state.activeStream || ws.readyState !== 1) return;
+  state.silencePromptCount = 0;
   state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
 }
 
@@ -129,8 +130,8 @@ function handleSilence(ws) {
       break;
 
     case "interrupt":
-      resetSilenceTimer(ws);  // Interruption counts as activity
       handleInterrupt(ws, msg);
+      resetSilenceTimer(ws);  // Restart after cancelling the old reply
       break;
 
     case "dtmf":
@@ -145,7 +146,61 @@ function handleSilence(ws) {
       type: "prose",
       audience: "builder",
       content:
-        "Second, inside your **existing** `wss.on(\"connection\", ...)` callback, replace the Step 1 `ws.on(\"close\", ...)` handler with this version so only this call's timers are cleared:",
+        "**Replace your existing `streamResponse` with this version.** It clears the silence countdown as soon as an AI reply starts, then restarts a full eight seconds when that reply finishes or falls back after an error. An interrupted reply does not restart an old timer: the `interrupt` handler above starts a new one for the caller.",
+    },
+
+    {
+      type: "code",
+      audience: "builder",
+      language: "javascript",
+      file: "server.js",
+      code: `async function streamResponse(ws) {
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  const controller = new AbortController();
+  state.activeStream = controller;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
+
+  try {
+    const stream = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
+      messages: state.conversationHistory,
+      stream: true,
+    }, { signal: controller.signal });
+
+    if (controller.signal.aborted || state.closed) return;
+    let assistantText = "";
+    for await (const chunk of stream) {
+      if (controller.signal.aborted || state.closed) return;
+      const token = chunk.choices[0]?.delta?.content ?? "";
+      if (token) {
+        assistantText += token;
+        sendText(ws, token);
+      }
+    }
+    sendText(ws, "", true);
+    state.conversationHistory.push({ role: "assistant", content: assistantText });
+  } catch (err) {
+    if (controller.signal.aborted || err.name === "AbortError" || state.closed) return;
+    console.error("LLM error:", err.message);
+    const apology = "I'm sorry, I'm having a technical issue. Could you say that again?";
+    sendText(ws, apology, true);
+    state.conversationHistory.push({ role: "assistant", content: apology });
+  } finally {
+    if (state.activeStream === controller) {
+      state.activeStream = null;
+      resetSilenceTimer(ws);
+    }
+  }
+}`,
+    },
+
+    {
+      type: "prose",
+      audience: "builder",
+      content:
+        "Inside your **existing** `wss.on(\"connection\", ...)` callback, replace the Step 1 `ws.on(\"close\", ...)` handler with this version so only this call's timers are cleared:",
     },
 
     {
@@ -169,7 +224,7 @@ function handleSilence(ws) {
       audience: "builder",
       variant: "warning",
       content:
-        "Be careful with the silence timeout value. Too short (under 5 seconds) and you will interrupt callers who are thinking. Too long (over 15 seconds) and the experience feels unresponsive. Start with 8-10 seconds and adjust based on your use case.\n\nWith the defaults, the caller hears nudges after 8 and 16 seconds, then a farewell after 24 seconds. The server waits another 6 seconds before ending the call so the farewell can play. Tune both delays for your voice and response length.",
+        "Be careful with the silence timeout value. Too short (under 5 seconds) and you will interrupt callers who are thinking. Too long (over 15 seconds) and the experience feels unresponsive. Start with 8-10 seconds and adjust based on your use case.\n\nWith the defaults, the server sends nudges 8 and 16 seconds after it finishes sending the AI reply or after the last caller activity, then a farewell after 24 seconds. It waits another 6 seconds before ending the call so the farewell can play. Tune both delays for your voice and response length.",
     },
 
     { type: "page-break" },
@@ -229,7 +284,7 @@ function handleSilence(ws) {
       file: "server.js",
       language: "javascript",
       explanation:
-        "Builds on the previous step by adding per-call silence timers, two nudges, a delayed farewell, timer resets on caller activity, and cleanup on WebSocket close. If you replace your whole server.js with this example, preserve any Chapter 3 persona, voice, greeting, language, and transcription values you chose.",
+        "Builds on the previous step by adding per-call silence timers, two nudges, a delayed farewell, pausing while the AI replies, timer resets on caller activity, and cleanup on WebSocket close. If you replace your whole server.js with this example, preserve any Chapter 3 persona, voice, greeting, language, and transcription values you chose.",
       code: `require("dotenv").config();
 const { WebSocketServer } = require("ws");
 const http = require("http");
@@ -285,10 +340,12 @@ async function streamResponse(ws) {
   state.activeStream?.abort();
   const controller = new AbortController();
   state.activeStream = controller;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
 
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: state.conversationHistory,
       stream: true,
     }, { signal: controller.signal });
@@ -312,7 +369,10 @@ async function streamResponse(ws) {
     sendText(ws, apology, true);
     state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    if (state.activeStream === controller) state.activeStream = null;
+    if (state.activeStream === controller) {
+      state.activeStream = null;
+      resetSilenceTimer(ws);
+    }
   }
 }
 
@@ -377,9 +437,10 @@ function resetSilenceTimer(ws) {
   const state = stateFor(ws);
   clearTimeout(state.silenceTimer);
   clearTimeout(state.endTimer);
-  if (state.closed || ws.readyState !== 1) return;
-  state.silencePromptCount = 0;
+  state.silenceTimer = null;
   state.endTimer = null;
+  if (state.closed || state.activeStream || ws.readyState !== 1) return;
+  state.silencePromptCount = 0;
   state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
 }
 
@@ -429,8 +490,8 @@ function handleMessage(ws, data) {
       break;
 
     case "interrupt":
-      resetSilenceTimer(ws);
       handleInterrupt(ws, msg);
+      resetSilenceTimer(ws);
       break;
 
     case "dtmf":

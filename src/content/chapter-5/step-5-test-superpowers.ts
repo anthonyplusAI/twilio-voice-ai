@@ -51,15 +51,22 @@ Server listening on port 8080`,
 
     {
       type: "prose",
+      audience: "explorer",
+      content:
+        "Speak each request below in the language you selected for your agent. Say city names and order numbers clearly; the agent should answer in that language too.",
+    },
+
+    {
+      type: "prose",
       audience: "builder",
       content:
-        "Or trigger your own `/call` endpoint from the terminal. Send the request through the public tunnel so the server gives Twilio a reachable callback URL:",
+        "Or make a call with your own upgraded Twilio account. Open a second Codespace terminal and run the local command, which uses your current public `/twiml` URL; the public tunnel blocks direct `/call` requests:",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ curl -X POST "$(tunnel-url call)"`,
+      commands: `$ npm run call`,
     },
 
     { type: "page-break" },
@@ -68,8 +75,16 @@ Server listening on port 8080`,
 
     {
       type: "prose",
+      audience: "builder",
       content:
         'When the phone rings, answer and ask: "What is the weather in San Francisco?"',
+    },
+
+    {
+      type: "prose",
+      audience: "explorer",
+      content:
+        "When the phone rings, answer and ask for the weather in San Francisco, using the language you selected.",
     },
 
     {
@@ -81,8 +96,16 @@ Server listening on port 8080`,
 
     {
       type: "prose",
+      audience: "builder",
       content:
         'The agent should say something like: "It is currently 60 degrees and sunny in San Francisco."',
+    },
+
+    {
+      type: "prose",
+      audience: "explorer",
+      content:
+        "The agent should report the sample conditions and temperature for San Francisco in your selected language.",
     },
 
     {
@@ -103,14 +126,30 @@ Server listening on port 8080`,
 
     {
       type: "prose",
+      audience: "builder",
       content:
         'Try: "Can you check the status of order 123?"',
     },
 
     {
       type: "prose",
+      audience: "explorer",
+      content:
+        "In your selected language, ask the agent to check the status of order 123.",
+    },
+
+    {
+      type: "prose",
+      audience: "builder",
       content:
         'The agent should look up the order and report the shipping status and delivery date. Then try an order that does not exist: "What about order 999?" The agent should let the caller know that order is not in the mock data.',
+    },
+
+    {
+      type: "prose",
+      audience: "explorer",
+      content:
+        "The agent should report the mock shipping status and delivery date in your selected language. Then ask about order 999 in that language; it should explain that the order is not in the sample data.",
     },
 
     { type: "page-break" },
@@ -128,7 +167,7 @@ Server listening on port 8080`,
       audience: "explorer",
       title: "Optional Test: Multi-Tool Call",
       content:
-        'Try a question that needs two lookups in one breath: "What is the weather in Seattle, and can you check order 123?" The agent should answer both parts in a single reply. This test only works when both tools are on in the tool picker -- if one is off, the agent can only answer the half it still has a tool for.',
+        "In your selected language, ask one question about the weather in Seattle and the status of order 123. The agent should answer both parts in a single reply. This test only works when both tools are on in the tool picker -- if one is off, the agent can only answer the half it still has a tool for.",
     },
 
     {
@@ -144,7 +183,7 @@ Server listening on port 8080`,
       audience: "explorer",
       title: "Optional Test: Joke Tool",
       content:
-        'Ask the agent: "Tell me a joke." The agent should use its **Tell a Joke** tool and come back with a short one-liner. This test only works when Tell a Joke is on in the tool picker -- if it is off, the agent will either make one up or explain it can not.',
+        "In your selected language, ask the agent for a joke. It should use its **Tell a Joke** tool and come back with a short one-liner. This test only works when Tell a Joke is on in the tool picker -- if it is off, the agent will either make one up or explain it can not.",
     },
 
     { type: "section", title: "Test 3: Handoff" },
@@ -160,7 +199,7 @@ Server listening on port 8080`,
       type: "prose",
       audience: "explorer",
       content:
-        'Say: "I need to speak with a real person." What happens next depends on your Live Handoff toggle. If Handoff is **on** and the facilitator configured a reachable destination, the agent should start a transfer. If Handoff is **off** (the default), it should politely decline and keep trying to help. If Handoff is on but no destination is configured, it should explain that live transfer is unavailable and stay on the call.',
+        "In your selected language, ask to speak with a real person. What happens next depends on your Live Handoff toggle. If Handoff is **on** and the facilitator configured a reachable destination, the agent should start a transfer. If Handoff is **off** (the default), it should politely decline and keep trying to help. If Handoff is on but no destination is configured, it should explain that live transfer is unavailable and stay on the call.",
     },
 
     {
@@ -168,7 +207,7 @@ Server listening on port 8080`,
       audience: "builder",
       variant: "warning",
       content:
-        "To test a live transfer, set `HANDOFF_PHONE_NUMBER` in `workshop/.env` to a second reachable phone, different from the caller's phone, in E.164 format, such as `+12065551234`, then restart `npm run dev`. An empty or placeholder destination cannot complete a handoff. The workshop site's Call Me button uses the site's Twilio account; your Codespace's `/call` route uses the account in `.env`. Whichever account places the call must be upgraded for ConversationRelay. A verified number on a trial account is not enough.",
+        "To test a live transfer, set `HANDOFF_PHONE_NUMBER` in `workshop/.env` to a second reachable phone, different from the caller's phone, in E.164 format, such as `+12065551234`, then restart `npm run dev`. An empty or placeholder destination cannot complete a handoff. The workshop site's Call Me button uses the site's Twilio account; `npm run call` uses the account in `.env`. Whichever account places the call must be upgraded for ConversationRelay. A verified number on a trial account is not enough.",
     },
 
     { type: "section", title: "Checkpoint" },

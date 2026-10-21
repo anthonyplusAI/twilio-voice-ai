@@ -64,7 +64,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "**Long-lived connections** -- The server keeps a live connection open for the entire call. Platforms that shut down between requests (like AWS Lambda or Vercel Functions) will not work.\n**Secure connections** -- Twilio requires HTTPS and WSS.\n**Secret storage** -- API keys and credentials need a safe home.\n**Always-on server** -- The process must stay running continuously, not start fresh for each request.",
+        "**Long-lived connections** -- The server keeps a live connection open for the entire call. Platforms that shut down between requests (like AWS Lambda or Vercel Functions) will not work.\n**Secure connections** -- Twilio requires HTTPS and WSS.\n**Secret storage** -- API keys and credentials need a safe home.\n**Access control** -- Block public call-creation routes and verify Twilio's signature before accepting a voice WebSocket.\n**Always-on server** -- The process must stay running continuously, not start fresh for each request.",
     },
 
     {
@@ -78,6 +78,14 @@ export default {
     { type: "page-break" },
 
     { type: "section", audience: "builder", title: "Prepare Your Builder Server" },
+
+    {
+      type: "callout",
+      audience: "builder",
+      variant: "warning",
+      content:
+        "**Secure the server before giving it a public address.** The Codespace's protected proxy blocks public `/call` requests and checks Twilio's signature on `/ws`, but a bare `server.js` deployment does not include that proxy. Remove or authenticate the `/call` route so visitors cannot spend your Twilio credit, and validate `X-Twilio-Signature` on WebSocket upgrades so strangers cannot spend your OpenAI credit. Apply equivalent controls before using any of the hosting options below.",
+    },
 
     {
       type: "prose",
@@ -204,7 +212,7 @@ CMD ["node", "server.js"]`,
       file: "workshop/server.js",
       highlight: ["1-9"],
       code: `// Inside your http.createServer handler, add a health check.
-// Place this route anywhere alongside /twiml and /call; the platform's
+// Place this route anywhere alongside /twiml; the platform's
 // health checker pings it on a schedule to confirm the server is alive.
 if (req.url === "/health" && req.method === "GET") {
   res.writeHead(200, { "Content-Type": "application/json" });
@@ -217,10 +225,16 @@ if (req.url === "/health" && req.method === "GET") {
     },
 
     {
+      type: "prose",
+      audience: "builder",
+      content:
+        "Build from `workshop/`, where Codespaces terminals already open. If you are in a local clone's repository root, run `cd workshop` once before these commands:",
+    },
+
+    {
       type: "terminal",
       audience: "builder",
-      commands: `$ cd workshop
-$ docker build -t voice-agent .
+      commands: `$ docker build -t voice-agent .
 $ docker run -p 8080:8080 --env-file .env voice-agent`,
     },
 
@@ -271,7 +285,7 @@ HANDOFF_PHONE_NUMBER=+15559876543`,
       type: "prose",
       audience: "builder",
       content:
-        "Once deployed, update the Twilio phone number's voice webhook in the Twilio Console to `https://<your-public-domain>/twiml` with method POST. Use the domain Railway generated or Render assigned, rather than your Codespace URL. If you test your `/call` route directly, send a POST to `https://<your-public-domain>/call` so the generated TwiML callback uses that same public domain.",
+        "After securing the public routes, update the Twilio phone number's voice webhook in the Twilio Console to `https://<your-public-domain>/twiml` with method POST. Use the domain Railway generated or Render assigned, rather than your Codespace URL. A call placed to that Twilio number will use the deployed `/twiml` and `/ws` endpoints.",
     },
 
     {

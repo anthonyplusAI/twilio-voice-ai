@@ -4,6 +4,20 @@ import twilio from "twilio";
 
 const MAX_CALLBACK_BYTES = 16 * 1024;
 
+// <Say> uses a separate voice format from ConversationRelay. These Polly
+// voices are paired with locales listed in Twilio's Text-to-Speech catalog.
+const SPOKEN_MESSAGES: Record<string, {
+  voice: string; hold: string; unavailable: string; goodbye: string;
+}> = {
+  "en-US": { voice: "Polly.Joanna", hold: "Please hold while we connect you to an agent.", unavailable: "Sorry, live handoff is unavailable right now. Goodbye.", goodbye: "Thank you for calling. Goodbye." },
+  "zh-CN": { voice: "Polly.Zhiyu-Neural", hold: "请稍等，我们正在为您转接客服。", unavailable: "抱歉，当前无法转接人工客服。再见。", goodbye: "感谢您的来电。再见。" },
+  "fr-FR": { voice: "Polly.Mathieu", hold: "Veuillez patienter pendant que nous vous mettons en relation avec un conseiller.", unavailable: "Désolé, le transfert vers un conseiller est indisponible pour le moment. Au revoir.", goodbye: "Merci de votre appel. Au revoir." },
+  "hi-IN": { voice: "Polly.Aditi", hold: "कृपया प्रतीक्षा करें, हम आपको एक प्रतिनिधि से जोड़ रहे हैं।", unavailable: "क्षमा करें, अभी आपको प्रतिनिधि से नहीं जोड़ सकते। अलविदा।", goodbye: "कॉल करने के लिए धन्यवाद। अलविदा।" },
+  "pt-BR": { voice: "Polly.Camila", hold: "Aguarde enquanto conectamos você a um atendente.", unavailable: "Desculpe, a transferência para um atendente está indisponível no momento. Até logo.", goodbye: "Obrigado por ligar. Até logo." },
+  "ru-RU": { voice: "Polly.Tatyana", hold: "Пожалуйста, подождите, мы соединяем вас с оператором.", unavailable: "Извините, сейчас перевод на оператора недоступен. До свидания.", goodbye: "Спасибо за звонок. До свидания." },
+  "es-ES": { voice: "Polly.Conchita", hold: "Espera mientras te comunicamos con un agente.", unavailable: "Lo sentimos, no podemos transferirte a un agente ahora mismo. Adiós.", goodbye: "Gracias por llamar. Adiós." },
+};
+
 class CallbackBodyTooLarge extends Error {}
 
 async function readCallbackParams(request: NextRequest): Promise<Record<string, string>> {
@@ -89,7 +103,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "Wrong Twilio account" }, { status: 403 });
   }
 
-  let handoffData: { reasonCode?: string; reason?: string } | null = null;
+  let handoffData: { reasonCode?: string; reason?: string; language?: string } | null = null;
 
   try {
     const rawHandoff = params.HandoffData;
@@ -98,6 +112,22 @@ export async function POST(request: NextRequest) {
     }
   } catch {
     // No handoff data or parse error — normal call end
+  }
+
+  const initialLanguage = new URL(request.url).searchParams.get("language");
+  const language = handoffData?.language && Object.hasOwn(SPOKEN_MESSAGES, handoffData.language)
+    ? handoffData.language
+    : initialLanguage && Object.hasOwn(SPOKEN_MESSAGES, initialLanguage)
+      ? initialLanguage
+      : "en-US";
+  const spoken = SPOKEN_MESSAGES[language];
+  const say = (message: string) => `<Say language="${language}" voice="${spoken.voice}">${message}</Say>`;
+
+  // The relay already played a full farewell before ending for silence.
+  if (handoffData?.reasonCode === "silence-timeout") {
+    return new Response("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>", {
+      headers: { "Content-Type": "application/xml" },
+    });
   }
 
   if (handoffData?.reasonCode === "live-agent-handoff") {
@@ -111,7 +141,7 @@ export async function POST(request: NextRequest) {
       || ["PREMIUM_RATE", "SHARED_COST"].includes(phone.getType() || "")) {
       return new Response(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Sorry, live handoff is unavailable right now. Goodbye.</Say>
+  ${say(spoken.unavailable)}
   <Hangup/>
 </Response>`, {
         headers: { "Content-Type": "application/xml" },
@@ -120,7 +150,7 @@ export async function POST(request: NextRequest) {
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Please hold while we connect you to an agent.</Say>
+  ${say(spoken.hold)}
   <Dial timeLimit="60">${destination}</Dial>
 </Response>`;
 
@@ -131,7 +161,7 @@ export async function POST(request: NextRequest) {
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Thank you for calling. Goodbye.</Say>
+  ${say(spoken.goodbye)}
   <Hangup/>
 </Response>`;
 

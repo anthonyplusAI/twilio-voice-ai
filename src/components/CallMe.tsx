@@ -6,6 +6,7 @@ import { useAudienceMode } from "@/lib/AudienceContext";
 import { useProgressContext } from "@/components/layout/ProgressContext";
 import { useAnalyticsContext } from "@/lib/AnalyticsContext";
 import { validateBuilderTwimlUrl } from "@/lib/call-target";
+import { resolveExplorerGreeting } from "@/lib/explorer-greeting";
 
 type CallStatus = "idle" | "calling" | "requested" | "error";
 
@@ -17,9 +18,8 @@ export function CallMe() {
     useProgressContext();
   const { sessionId } = useAnalyticsContext();
 
-  const [phoneNumber, setPhoneNumber] = useState(
-    () => progress.workshopState.phoneNumber || ""
-  );
+  const [editedPhoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const phoneNumber = editedPhoneNumber ?? progress.workshopState.phoneNumber ?? "";
   const [twimlUrl, setTwimlUrl] = useState("");
   const [useBuiltIn, setUseBuiltIn] = useState(false);
   const [status, setStatus] = useState<CallStatus>("idle");
@@ -65,7 +65,10 @@ export function CallMe() {
         ttsProvider: progress.workshopState.ttsProvider || undefined,
         language: progress.workshopState.language || undefined,
         personality: progress.workshopState.personality || undefined,
-        welcomeGreeting: progress.workshopState.welcomeGreeting || undefined,
+        welcomeGreeting: resolveExplorerGreeting(
+          progress.workshopState.welcomeGreeting,
+          progress.workshopState.language || "en-US",
+        ),
         enabledTools: progress.workshopState.enabledTools,
         handoffEnabled: progress.workshopState.handoffEnabled || undefined,
       },

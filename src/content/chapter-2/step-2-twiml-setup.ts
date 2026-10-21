@@ -23,7 +23,7 @@ export default {
             type: "prose",
             audience: "builder",
             content:
-                'Your server needs two things: a way to trigger an outbound call, and instructions that tell Twilio what to do when someone answers. Twilio calls these instructions TwiML -- a short XML response that says "connect this call to my AI agent via Conversation Relay."',
+                'An outbound call needs two things: a request that tells Twilio to dial, and instructions that tell Twilio what to do when someone answers. The workshop site makes the dial request for Call Me; you can also make one from your Codespace with `npm run call` and your own account. Twilio calls the second part TwiML -- a short XML response that says "connect this call to my AI agent via Conversation Relay."',
         },
 
         {
@@ -105,7 +105,7 @@ export default {
             type: "prose",
             audience: "builder",
             content:
-                "Add a `/call` endpoint that dials your phone and points Twilio at the TwiML route:",
+                "Add a local `/call` endpoint to see how a Node server can dial your phone and point Twilio at the TwiML route. The Codespace's public tunnel blocks `/call`; later you will use the site's Call Me button or `npm run call` from a Codespace terminal:",
         },
 
         {
@@ -113,7 +113,7 @@ export default {
             audience: "builder",
             variant: "info",
             content:
-                "**Env vars used below.** The optional Codespace `/call` route references four variables from `workshop/.env`:\n\n- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` -- identify the account placing this outbound call\n- `TWILIO_PHONE_NUMBER` -- the number this call originates from\n- `MY_PHONE_NUMBER` -- the personal number receiving this call\n\nThe website's Call Me button uses the site's Twilio account instead. If you use your own Codespace `/call` route, the account must be upgraded: [trial accounts block ConversationRelay](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). Get the SID/token from [console.twilio.com](https://console.twilio.com) and a voice-capable number from Phone Numbers.",
+                "**Env vars used below.** The optional local `/call` route and `npm run call` use four variables from `workshop/.env`:\n\n- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` -- identify the account placing this outbound call\n- `TWILIO_PHONE_NUMBER` -- the number this call originates from\n- `MY_PHONE_NUMBER` -- the personal number receiving this call\n\nThe website's Call Me button uses the site's Twilio account instead, so you do not need your own Twilio credentials for that call. To use `npm run call`, your account must be upgraded: [trial accounts block ConversationRelay](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). Get the SID/token from [console.twilio.com](https://console.twilio.com) and a voice-capable number from Phone Numbers.",
         },
 
         {

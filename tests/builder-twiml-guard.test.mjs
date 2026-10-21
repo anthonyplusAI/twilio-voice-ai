@@ -54,14 +54,14 @@ test("Chapter 2 guided TwiML is accepted and the Connect action is owned by the 
   assert.match(xml, /<ConversationRelay url="wss:\/\/voice-demo\.trycloudflare\.com\/ws"/);
 });
 
-test("Chapter 6 guided TwiML preserves its voice settings and proxies the handoff action", () => {
+test("Chapter 6 guided TwiML keeps language defaults and proxies the handoff action", () => {
   const parsed = parseBuilderTwiml(
     guidedTwiml("../src/content/chapter-6/step-1-polish.ts"),
     TWIML_URL,
   );
   assert.equal(parsed.actionUrl, "https://" + HOST + "/call-ended");
-  assert.equal(parsed.relayAttributes.voice, "en-US-Chirp3-HD-Aoede");
-  assert.equal(parsed.relayAttributes.ttsProvider, "Google");
+  assert.equal(parsed.relayAttributes.voice, undefined);
+  assert.equal(parsed.relayAttributes.ttsProvider, undefined);
   assert.equal(parsed.relayAttributes.dtmfDetection, "true");
   assert.equal(parsed.relayAttributes.interruptSensitivity, "medium");
   assert.equal(parsed.relayAttributes.hints, "Twilio Pizza Co., order status, transfer, refund");
@@ -70,6 +70,21 @@ test("Chapter 6 guided TwiML preserves its voice settings and proxies the handof
   assert.match(xml, /hints="Twilio Pizza Co., order status, transfer, refund"/);
   assert.doesNotMatch(xml, /action="\/call-ended"/);
   assert.doesNotMatch(xml, /trycloudflare\.com\/call-ended/);
+});
+
+test("bilingual Builder examples across Chapters 4 and 5 are accepted by Call Me", () => {
+  for (const file of [
+    "../src/content/chapter-4/step-4-language-switch.ts",
+    "../src/content/chapter-5/step-2-define-tools.ts",
+    "../src/content/chapter-5/step-3-handle-tools.ts",
+    "../src/content/chapter-5/step-4-handoff.ts",
+  ]) {
+    const parsed = parseBuilderTwiml(guidedTwiml(file), TWIML_URL);
+    assert.equal(parsed.relayAttributes.voice, undefined, file);
+    assert.equal(parsed.relayAttributes.ttsProvider, undefined, file);
+    assert.equal(parsed.relayAttributes.language, "en-US", file);
+    assert.match(rendered(parsed), /<ConversationRelay /, file);
+  }
 });
 
 test("the absolute same-host action URL is accepted and normalized", () => {
@@ -113,6 +128,15 @@ test("the relay WebSocket must be wss on the TwiML host at exactly /ws", () => {
       url,
     );
   }
+});
+
+test("Builder preflight rejects Deepgram as a text-to-speech provider", () => {
+  assert.throws(
+    () => parseBuilderTwiml(initialXml(
+      'url="' + RELAY_URL + '" ttsProvider="Deepgram"',
+    ), TWIML_URL),
+    /ttsProvider/,
+  );
 });
 
 test("Builder action permits only /call-ended on the same host without URL tricks", () => {

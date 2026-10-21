@@ -68,7 +68,7 @@ export default {
             variant: "info",
             audience: "builder",
             content:
-                "**A free GitHub account opens your Codespace.** If you do not have one, create it at [github.com](https://github.com). You will add an OpenAI API key in a later step. You only need your own upgraded Twilio credentials if you place calls from your Codespace's `/call` route; the workshop site's Call Me button uses the site's account.",
+                "**A free GitHub account opens your Codespace.** If you do not have one, create it at [github.com](https://github.com). You will add an OpenAI API key in a later step. You only need your own upgraded Twilio credentials if you place calls with `npm run call`; the workshop site's Call Me button uses the site's account.",
         },
 
         { type: "page-break" },

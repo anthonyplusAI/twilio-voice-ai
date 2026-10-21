@@ -104,6 +104,42 @@ test("a signed Explorer callback without handoff data ends the call normally", a
   assert.doesNotMatch(xml, /<Dial\b/);
 });
 
+test("Explorer action speaks the selected initial language after a normal call end", async () => {
+  const url = `${publicUrl}?language=fr-FR`;
+  const response = await routeFor("+12065550101")(
+    handoffRequest({ requestUrl: url, signingUrl: url, params: { HandoffData: "" } }),
+  );
+  assert.equal(response.status, 200);
+  const xml = await response.text();
+  assert.match(xml, /<Say language="fr-FR" voice="Polly\.Mathieu">Merci de votre appel\. Au revoir\.<\/Say>/);
+  assert.doesNotMatch(xml, /<Dial\b/);
+});
+
+test("Explorer action uses the switched language for a live handoff", async () => {
+  const url = `${publicUrl}?language=fr-FR`;
+  const response = await routeFor("+12065550101")(
+    handoffRequest({
+      requestUrl: url,
+      signingUrl: url,
+      params: { HandoffData: JSON.stringify({ reasonCode: "live-agent-handoff", language: "es-ES" }) },
+    }),
+  );
+  assert.equal(response.status, 200);
+  const xml = await response.text();
+  assert.match(xml, /<Say language="es-ES" voice="Polly\.Conchita">Espera mientras te comunicamos con un agente\.<\/Say>/);
+  assert.match(xml, /<Dial timeLimit="60">\+12065550101<\/Dial>/);
+});
+
+test("Explorer silence timeout hangs up after the relay farewell without repeating it", async () => {
+  const response = await routeFor("+12065550101")(
+    handoffRequest({ params: { HandoffData: JSON.stringify({ reasonCode: "silence-timeout", language: "hi-IN" }) } }),
+  );
+  assert.equal(response.status, 200);
+  const xml = await response.text();
+  assert.match(xml, /<Hangup\s*\/>/);
+  assert.doesNotMatch(xml, /<Say\b|<Dial\b/);
+});
+
 test("an unsigned Explorer callback is rejected without reading its body", async () => {
   const request = {
     headers: new Headers({ "Content-Type": "application/x-www-form-urlencoded" }),

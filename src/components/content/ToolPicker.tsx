@@ -7,19 +7,19 @@ const TOOLS = [
     id: "check_weather",
     name: "Check Weather",
     desc: "Tells the caller the current weather in a city.",
-    tryThis: 'Say: "What is the weather in San Francisco?"',
+    tryThis: "Try asking about the weather in San Francisco in your selected language.",
   },
   {
     id: "lookup_order",
     name: "Look Up Order",
     desc: "Finds the status of a customer order by its order number.",
-    tryThis: 'Say: "Where is order 123?"',
+    tryThis: "Try asking about order 123 in your selected language.",
   },
   {
     id: "tell_joke",
     name: "Tell a Joke",
     desc: "Pulls a short joke from the agent's joke book.",
-    tryThis: 'Say: "Tell me a joke."',
+    tryThis: "Try asking for a joke in your selected language.",
   },
 ];
 

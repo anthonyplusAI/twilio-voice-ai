@@ -42,7 +42,9 @@ jobs:
       # `next build` is the build-integrity gate (catches RSC/bundler errors).
       - run: pnpm build
       # Includes the Codespaces Builder runtime and protected call routes.
-      - run: node --test tests/*.test.mjs
+      # Several tests start real Next.js and Codespaces servers; limit parallel
+      # files so those startup checks remain reliable on two-core CI runners.
+      - run: node --test --test-concurrency=2 tests/*.test.mjs
 
   security:
     name: Security

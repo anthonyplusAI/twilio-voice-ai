@@ -96,6 +96,23 @@ const MOCK_WEATHER = {
   denver: { temp: 66, conditions: "Clear", humidity: 35 },
 };
 
+// Guided Explorer demos ask for San Francisco and Seattle weather in the
+// selected language. The model may pass the spoken city name through unchanged.
+const CITY_ALIASES = {
+  "旧金山": "san francisco",
+  "舊金山": "san francisco",
+  "सैन फ्रांसिस्को": "san francisco",
+  "सैन फ़्रांसिस्को": "san francisco",
+  "são francisco": "san francisco",
+  "сан-франциско": "san francisco",
+  "西雅图": "seattle",
+  "西雅圖": "seattle",
+  "सिएटल": "seattle",
+  "सियाटल": "seattle",
+  "сиэтл": "seattle",
+  "сиэтле": "seattle",
+};
+
 const MOCK_ORDERS = {
   "123": {
     status: "Shipped",
@@ -120,8 +137,9 @@ const SUPPORTED_ORDERS = "123, 456, or 789";
 export function executeTool(name, args) {
   switch (name) {
     case "check_weather": {
-      const city = (args.city || "").toLowerCase();
-      const weather = MOCK_WEATHER[city];
+      const city = typeof args.city === "string"
+        ? args.city.normalize("NFKC").trim().toLowerCase() : "";
+      const weather = MOCK_WEATHER[CITY_ALIASES[city] || city];
       if (!weather) {
         return JSON.stringify({
           error: `"${args.city}" is not in the workshop mock data. This is demo data, not a live weather API. Supported cities: ${SUPPORTED_CITIES}.`,

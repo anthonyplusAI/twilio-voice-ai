@@ -299,7 +299,9 @@ app.prepare().then(() => {
       let verified = false;
       if (req.url === "/ws" && typeof signature === "string" && signature) {
         try {
-          verified = twilio.validateRequest(authToken, signature, signedUrl, {});
+          // Twilio can sign the same upgrade URL with or without a trailing slash.
+          verified = twilio.validateRequest(authToken, signature, signedUrl, {}) ||
+            twilio.validateRequest(authToken, signature, `${signedUrl}/`, {});
         } catch { /* A malformed signature is unauthorized. */ }
       }
       if (!verified) {

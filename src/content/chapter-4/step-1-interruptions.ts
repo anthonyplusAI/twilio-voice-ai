@@ -124,7 +124,7 @@ async function streamResponse(ws) {
 
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: state.conversationHistory,
       stream: true,
     }, { signal: controller.signal });
@@ -337,7 +337,7 @@ async function streamResponse(ws) {
 
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: state.conversationHistory,
       stream: true,
     }, { signal: controller.signal });
