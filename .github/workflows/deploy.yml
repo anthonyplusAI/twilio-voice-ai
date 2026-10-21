@@ -135,6 +135,55 @@ jobs:
             --yaml /tmp/containerapp.yaml \
             --output none
 
+      # In single-revision mode, the old revision serves the app FQDN until
+      # the new one is ready. /health on that FQDN can therefore pass too early.
+      - name: Wait for deployed revision
+        id: revision
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 45); do
+            state=$(az containerapp show \
+              --name "$ACA_NAME" --resource-group "$ACA_RESOURCE_GROUP" \
+              --query '{latest:properties.latestRevisionName,ready:properties.latestReadyRevisionName,fqdn:properties.latestRevisionFqdn,traffic:properties.configuration.ingress.traffic}' \
+              -o json) || state='{}'
+            latest=$(jq -r '.latest // empty' <<< "$state")
+            ready=$(jq -r '.ready // empty' <<< "$state")
+            revision_fqdn=$(jq -r '.fqdn // empty' <<< "$state")
+            latest_weight=$(jq -r '([.traffic[]? | select(.latestRevision == true) | .weight] | add) // 0' <<< "$state")
+            revision_image=''
+            if [ -n "$latest" ]; then
+              revision_image=$(az containerapp revision show \
+                --name "$ACA_NAME" --resource-group "$ACA_RESOURCE_GROUP" \
+                --revision "$latest" \
+                --query 'properties.template.containers[0].image' -o tsv 2>/dev/null || true)
+            fi
+
+            if [ -n "$latest" ] && [ "$latest" = "$ready" ] && \
+               [ "$revision_image" = "$IMAGE" ] && [ "$latest_weight" = 100 ] && \
+               [ -n "$revision_fqdn" ]; then
+              echo "Revision $latest is ready with image $revision_image and 100% traffic."
+              echo "fqdn=$revision_fqdn" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "Attempt $i: latest=${latest:-none}, ready=${ready:-none}, image=${revision_image:-unavailable}, latest traffic=${latest_weight}%; retrying"
+            if [ "$i" -lt 45 ]; then sleep 10; fi
+          done
+
+          echo "::error::Expected image $IMAGE did not become the ready latest revision with 100% traffic."
+          az containerapp show \
+            --name "$ACA_NAME" --resource-group "$ACA_RESOURCE_GROUP" \
+            --query '{latest:properties.latestRevisionName,ready:properties.latestReadyRevisionName,fqdn:properties.latestRevisionFqdn,traffic:properties.configuration.ingress.traffic}' \
+            -o json || true
+          if [ -n "$latest" ]; then
+            az containerapp revision show \
+              --name "$ACA_NAME" --resource-group "$ACA_RESOURCE_GROUP" \
+              --revision "$latest" \
+              --query '{image:properties.template.containers[0].image,health:properties.healthState,provisioning:properties.provisioningState,weight:properties.trafficWeight}' \
+              -o json || true
+          fi
+          exit 1
+
       - name: Resolve app FQDN
         id: fqdn
         run: |
@@ -148,51 +197,66 @@ jobs:
       - name: Smoke test /health
         env:
           FQDN: ${{ steps.fqdn.outputs.fqdn }}
+          REVISION_FQDN: ${{ steps.revision.outputs.fqdn }}
         run: |
-          for i in $(seq 1 30); do
-            CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" "https://$FQDN/health" || true)
-            if [ "$CODE" = "200" ]; then
-              echo "Healthz OK after attempt $i"; cat /tmp/health.json; echo
-              echo "Deployed: https://$FQDN"
-              exit 0
-            fi
-            echo "Attempt $i: status=$CODE — retrying in 10s"; sleep 10
+          set -euo pipefail
+          for host in "$REVISION_FQDN" "$FQDN"; do
+            for i in $(seq 1 30); do
+              code=$(curl --silent --show-error --max-time 10 -o /tmp/health.json \
+                -w '%{http_code}' "https://$host/health" || true)
+              if [ "$code" = 200 ]; then
+                echo "Health OK on $host after attempt $i"
+                break
+              fi
+              echo "Attempt $i on $host: /health returned $code"
+              if [ "$i" -eq 30 ]; then
+                echo "::error::/health on $host never returned 200 after 30 attempts."
+                exit 1
+              fi
+              sleep 10
+            done
           done
-          echo "::error::/health never returned 200 after 5 minutes."; exit 1
+          echo "Deployed: https://$FQDN"
 
       - name: Smoke test voice routes and organizer access
         env:
           FQDN: ${{ steps.fqdn.outputs.fqdn }}
+          REVISION_FQDN: ${{ steps.revision.outputs.fqdn }}
         run: |
           set -euo pipefail
-          origin="https://$FQDN"
-          twiml=$(curl --fail --silent --show-error --max-time 15 --request POST "$origin/api/twiml")
-          if ! grep -Fq '<ConversationRelay' <<< "$twiml" ||
-             ! grep -Fq 'wss://' <<< "$twiml" ||
-             ! grep -Fq '/api/connect-action' <<< "$twiml"; then
-            echo "::error::Explorer TwiML did not contain the expected voice connection."
-            exit 1
-          fi
+          check_routes() {
+            local label="$1" origin="$2" attempt twiml_code twiml_ok call_code admin_code verifier_code
+            for attempt in $(seq 1 30); do
+              twiml_code=$(curl --silent --show-error --max-time 10 -o /tmp/twiml.xml \
+                -w '%{http_code}' --request POST "$origin/api/twiml" || true)
+              twiml_ok=false
+              if [ "$twiml_code" = 200 ] &&
+                 grep -Fq '<ConversationRelay' /tmp/twiml.xml &&
+                 grep -Fq 'wss://' /tmp/twiml.xml &&
+                 grep -Fq '/api/connect-action' /tmp/twiml.xml; then
+                twiml_ok=true
+              fi
 
-          # This malformed request stops before any Twilio call or rate-limit reservation.
-          call_code=$(curl --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' \
-            --header 'Content-Type: application/json' --data '{}' "$origin/api/call")
-          if [ "$call_code" != 400 ]; then
-            echo "::error::Call endpoint returned $call_code instead of its expected validation response."
-            exit 1
-          fi
+              # Malformed requests stop before a Twilio call or rate-limit reservation.
+              call_code=$(curl --silent --show-error --max-time 10 -o /dev/null -w '%{http_code}' \
+                --header 'Content-Type: application/json' --data '{}' "$origin/api/call" || true)
+              admin_code=$(curl --silent --show-error --max-time 10 -o /dev/null -w '%{http_code}' \
+                "$origin/admin" || true)
+              # A Builder Codespace calls this route before accepting site-signed /ws.
+              verifier_code=$(curl --silent --show-error --max-time 10 -o /dev/null -w '%{http_code}' \
+                --header 'Content-Type: application/json' --data '{}' "$origin/api/verify-builder-ws" || true)
 
-          admin_code=$(curl --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' "$origin/admin")
-          if [ "$admin_code" != 401 ]; then
-            echo "::error::Organizer dashboard returned $admin_code without credentials."
-            exit 1
-          fi
+              if [ "$twiml_ok" = true ] && [ "$call_code" = 400 ] && \
+                 [ "$admin_code" = 401 ] && [ "$verifier_code" = 400 ]; then
+                echo "$label voice routes and organizer access passed after attempt $attempt."
+                return 0
+              fi
+              echo "Attempt $attempt on $label: TwiML=$twiml_code expected XML=$twiml_ok, Call Me=$call_code, admin=$admin_code, Builder verifier=$verifier_code"
+              if [ "$attempt" -lt 30 ]; then sleep 10; fi
+            done
+            echo "::error::$label voice routes failed after 30 attempts: TwiML=$twiml_code expected XML=$twiml_ok, Call Me=$call_code, admin=$admin_code, Builder verifier=$verifier_code"
+            return 1
+          }
 
-          # A Builder Codespace calls this route before accepting site-signed /ws.
-          verifier_code=$(curl --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' \
-            --header 'Content-Type: application/json' --data '{}' "$origin/api/verify-builder-ws")
-          if [ "$verifier_code" != 400 ]; then
-            echo "::error::Builder WebSocket verifier returned $verifier_code instead of its expected validation response."
-            exit 1
-          fi
-          echo "Voice routes and organizer access are responding as expected."
+          check_routes 'deployed revision' "https://$REVISION_FQDN"
+          check_routes 'public app' "https://$FQDN"
