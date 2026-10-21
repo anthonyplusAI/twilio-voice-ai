@@ -32,14 +32,14 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Install the `ws` and `dotenv` packages:",
+        "The Codespace installed `ws` and `dotenv` from `workshop/package.json`. If you are building locally or installation was interrupted, run this from `workshop/`:",
     },
 
     {
       type: "code",
       audience: "builder",
       language: "bash",
-      code: "npm install ws dotenv",
+      code: "npm ci",
     },
 
     {

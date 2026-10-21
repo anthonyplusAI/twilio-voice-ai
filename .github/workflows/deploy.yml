@@ -5,9 +5,8 @@ name: Deploy to Azure Container Apps
 # this workflow does NOT create infrastructure (RG / ACR / env / storage are
 # provisioned once by scripts/provision-azure.sh).
 #
-# The app uses a containerapp.yaml manifest + an Azure Files mount for the
-# analytics SQLite DB; both are preserved here. App secrets are synced
-# skip-on-unset before the manifest is applied.
+# The app uses a containerapp.yaml manifest and an existing Azure Files mount.
+# App secrets are synced skip-on-unset before the manifest is applied.
 
 on:
   push:
@@ -110,6 +109,19 @@ jobs:
             echo "No secrets to sync."
           fi
 
+      - name: Check call protection setup
+        run: |
+          set -euo pipefail
+          names=$(az containerapp secret list \
+            --name "$ACA_NAME" --resource-group "$ACA_RESOURCE_GROUP" \
+            --query '[].name' -o tsv)
+          for required in call-limit-storage public-base-url admin-password; do
+            if ! grep -Fxq "$required" <<< "$names"; then
+              echo "::error::Missing Container App secret '$required'. Run scripts/configure-call-protection.sh before deploying."
+              exit 1
+            fi
+          done
+
       - name: Apply Container App manifest (image via envsubst)
         env:
           APP_NAME: ${{ vars.ACA_NAME }}
@@ -147,3 +159,40 @@ jobs:
             echo "Attempt $i: status=$CODE — retrying in 10s"; sleep 10
           done
           echo "::error::/health never returned 200 after 5 minutes."; exit 1
+
+      - name: Smoke test voice routes and organizer access
+        env:
+          FQDN: ${{ steps.fqdn.outputs.fqdn }}
+        run: |
+          set -euo pipefail
+          origin="https://$FQDN"
+          twiml=$(curl --fail --silent --show-error --max-time 15 --request POST "$origin/api/twiml")
+          if ! grep -Fq '<ConversationRelay' <<< "$twiml" ||
+             ! grep -Fq 'wss://' <<< "$twiml" ||
+             ! grep -Fq '/api/connect-action' <<< "$twiml"; then
+            echo "::error::Explorer TwiML did not contain the expected voice connection."
+            exit 1
+          fi
+
+          # This malformed request stops before any Twilio call or rate-limit reservation.
+          call_code=$(curl --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' \
+            --header 'Content-Type: application/json' --data '{}' "$origin/api/call")
+          if [ "$call_code" != 400 ]; then
+            echo "::error::Call endpoint returned $call_code instead of its expected validation response."
+            exit 1
+          fi
+
+          admin_code=$(curl --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' "$origin/admin")
+          if [ "$admin_code" != 401 ]; then
+            echo "::error::Organizer dashboard returned $admin_code without credentials."
+            exit 1
+          fi
+
+          # A Builder Codespace calls this route before accepting site-signed /ws.
+          verifier_code=$(curl --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' \
+            --header 'Content-Type: application/json' --data '{}' "$origin/api/verify-builder-ws")
+          if [ "$verifier_code" != 400 ]; then
+            echo "::error::Builder WebSocket verifier returned $verifier_code instead of its expected validation response."
+            exit 1
+          fi
+          echo "Voice routes and organizer access are responding as expected."

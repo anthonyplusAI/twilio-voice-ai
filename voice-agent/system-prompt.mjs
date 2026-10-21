@@ -1,13 +1,21 @@
+// Keep these codes aligned with the Explorer language picker and its TwiML
+// <Language> mappings. The relay can only switch to a configured language.
+export const WORKSHOP_LANGUAGE_CODES = [
+  "en-US", "zh-CN", "fr-FR", "hi-IN", "pt-BR", "ru-RU", "es-ES",
+];
+
 export function buildSystemPrompt(config = {}) {
   const name = config.agentName || "Aria";
   const personality =
     config.personality ||
     "friendly, helpful, and conversational. You speak naturally and concisely.";
-  const handoffEnabled = config.handoffEnabled !== false;
+  const initialLanguage = WORKSHOP_LANGUAGE_CODES.includes(config.initialLanguage)
+    ? config.initialLanguage : "en-US";
+  const handoffEnabled = config.handoffEnabled === true;
 
   const handoffBlock = handoffEnabled
     ? `Handoff to a human:
-- If the caller asks to speak with a real person, a manager, or a human agent, say a brief farewell like "Let me connect you with someone who can help. One moment please." and then call the transfer_to_agent tool with a reason code and a short summary of the conversation.
+- If the caller asks to speak with a real person, a manager, or a human agent, call the transfer_to_agent tool immediately with a reason code and a short summary of the conversation. Do not announce the transfer in your response; the call transfer will announce it after the AI session ends.
 - Only call transfer_to_agent when the caller explicitly asks for a human. Never use it on your own.`
     : `Handoff to a human (disabled):
 - Handoff to a live agent is turned off for this call.
@@ -33,8 +41,11 @@ Pronunciation:
 ${handoffBlock}
 
 Language switching:
-- If the caller switches to a different language (e.g., they start speaking Spanish), respond in that language and include a language marker at the very beginning of your response.
-- The marker format is [LANG:xx-XX] where xx-XX is the BCP-47 language code. Examples: [LANG:es-ES], [LANG:fr-FR], [LANG:de-DE], [LANG:ja-JP], [LANG:pt-BR].
+- The call starts in ${initialLanguage}. Respond in that language until the caller asks for, or speaks in, another supported language.
+- You may switch among these language codes: ${WORKSHOP_LANGUAGE_CODES.join(", ")}. If asked for another language, explain which languages are available.
+- If the caller asks in English to switch to a supported language, answer in the requested language on your next response. Include the language marker even though their request was spoken in English.
+- If the caller switches to a different supported language (e.g., they start speaking Spanish), respond in that language and include a language marker at the very beginning of your response.
+- The marker format is [LANG:xx-XX] where xx-XX is the BCP-47 language code. Examples: [LANG:es-ES], [LANG:fr-FR], [LANG:pt-BR].
 - Only include the marker when switching languages, not on every response.
 - If the caller switches back to English, include [LANG:en-US] at the start of that response.`;
 }

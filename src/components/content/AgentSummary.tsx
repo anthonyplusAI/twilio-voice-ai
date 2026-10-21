@@ -1,6 +1,7 @@
 "use client";
 
 import { useProgressContext } from "@/components/layout/ProgressContext";
+import { resolveExplorerGreeting } from "@/lib/explorer-greeting";
 
 const LANGUAGE_LABELS: Record<string, string> = {
   "en-US": "English (US)",
@@ -16,6 +17,7 @@ const LANGUAGE_LABELS: Record<string, string> = {
   "zh-CN": "Chinese (Mandarin)",
   "it-IT": "Italian",
   "hi-IN": "Hindi",
+  "ru-RU": "Russian",
 };
 
 export function AgentSummary() {
@@ -24,7 +26,7 @@ export function AgentSummary() {
 
   const name = s.agentName?.trim() || "Your Agent";
   const personality = s.personality?.trim();
-  const greeting = s.welcomeGreeting?.trim();
+  const greeting = resolveExplorerGreeting(s.welcomeGreeting, s.language || "en-US");
   const voiceLabel = s.voiceLabel?.trim();
   const ttsProvider = s.ttsProvider?.trim();
   const voiceId = s.voice?.trim();
@@ -73,7 +75,6 @@ export function AgentSummary() {
         <SummaryRow
           label="Greeting"
           value={greeting}
-          fallback="No greeting set"
         />
       </div>
     </div>

@@ -58,7 +58,7 @@ export function HandoffToggle() {
             </div>
             <div className="text-xs text-text-muted leading-relaxed">
               {isOn
-                ? "If the caller asks for a human, the agent will end the AI session and transfer the call."
+                ? "If a live handoff number is configured, the agent can transfer the call when asked."
                 : "The agent will politely decline requests to reach a human and keep trying to help."}
             </div>
           </div>
@@ -81,7 +81,7 @@ export function HandoffToggle() {
           <span className="font-medium text-text-primary">Try it both ways.</span>{" "}
           With handoff off, ask &quot;Can I speak to a human?&quot; — the agent
           will explain it can&apos;t transfer you. Flip it on and ask again — the
-          agent will say goodbye and end the call.
+          agent will transfer when a live destination is configured.
         </p>
       </div>
     </div>

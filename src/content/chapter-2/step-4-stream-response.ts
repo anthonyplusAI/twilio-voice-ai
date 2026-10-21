@@ -32,14 +32,14 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Install the OpenAI SDK:",
+        "The Codespace installed the OpenAI SDK from `workshop/package.json`. If you are building locally or installation was interrupted, run this from `workshop/`:",
     },
 
     {
       type: "code",
       audience: "builder",
       language: "bash",
-      code: "npm install openai",
+      code: "npm ci",
     },
 
     {
@@ -149,7 +149,7 @@ const openai = new OpenAI({
 async function streamLLMResponse(ws, conversationHistory) {
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: [
         {
           role: "system",
@@ -304,7 +304,7 @@ function sendText(ws, token, last = false) {
 async function streamLLMResponse(ws, conversationHistory) {
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
       messages: [
         {
           role: "system",

@@ -8,8 +8,8 @@ set -euo pipefail
 #   gh auth status  # and authenticated to GitHub
 #   ./scripts/provision-azure.sh
 #
-# Idempotent. Creates the Azure resources (incl. the Azure Files share the
-# analytics SQLite DB mounts), the OIDC federated credential, and the GitHub
+# Idempotent. Creates the Azure resources (incl. the existing Azure Files share),
+# the OIDC federated credential, and the GitHub
 # vars/secrets the deploy reads. Adopts existing resources rather than inventing
 # names. Mirrors docs/INFRA_SETUP.md.
 # ════════════════════════════════════════════════════════════════════════════
@@ -20,7 +20,7 @@ LOCATION="${LOCATION:-centralus}"
 ACR="${ACR:-voiceaiworkshop}"            # ACR name (globally unique, alnum)
 ACA_ENV="${ACA_ENV:-voiceaiworkshop}"
 ACA="${ACA:-voice-ai-workshop}"
-STORAGE="${STORAGE:-voiceaiworkshop}"    # analytics-DB file-share storage account
+STORAGE="${STORAGE:-voiceaiworkshop}"    # file-share and call-limit table storage account
 FILE_SHARE="${FILE_SHARE:-voiceaidata}"
 LAW="${LAW:-law-voiceaiworkshop}"
 TAGS=(created_by=github-actions managed_by=voice-ai-workshop-ci)
@@ -52,7 +52,7 @@ echo "    GitHub repo:        $REPO"
 echo "    Azure subscription: $SUB"
 echo "    Resource group:     $RG ($LOCATION)"
 echo "    Container Registry: $ACR | Container App: $ACA"
-echo "    Storage/File share: $STORAGE / $FILE_SHARE (analytics DB mount)"
+echo "    Storage/File share: $STORAGE / $FILE_SHARE"
 echo ""
 read -r -p "Proceed with provisioning into the above subscription? [y/N] " ok
 [ "$ok" = "y" ] || [ "$ok" = "Y" ] || { echo "Aborted."; exit 0; }
@@ -64,7 +64,7 @@ echo "==> [2/7] Container Registry (no admin user — OIDC pulls)..."
 az acr show -n "$ACR" -g "$RG" -o none 2>/dev/null \
   || az acr create -n "$ACR" -g "$RG" --sku Basic --tags "${TAGS[@]}" -o none
 
-echo "==> [3/7] Storage account + file share (analytics SQLite mount)..."
+echo "==> [3/7] Storage account + file share..."
 az storage account show -n "$STORAGE" -g "$RG" -o none 2>/dev/null \
   || az storage account create -n "$STORAGE" -g "$RG" -l "$LOCATION" --sku Standard_LRS --tags "${TAGS[@]}" -o none
 STORAGE_KEY=$(az storage account keys list -g "$RG" --account-name "$STORAGE" --query '[0].value' -o tsv)

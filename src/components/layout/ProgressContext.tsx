@@ -45,6 +45,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     updateWorkshopState(partial: Record<string, string>) {
       progress.updateWorkshopState(partial);
       for (const [field, value] of Object.entries(partial)) {
+        if (field === "phoneNumber") continue;
         analytics.emit("agent_configured", { field, value });
       }
     },

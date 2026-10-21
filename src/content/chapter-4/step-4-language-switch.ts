@@ -9,14 +9,22 @@ export default {
       audience: "explorer",
       title: "Switching Languages Mid-Call",
       content:
-        "Some callers start in one language and slide into another -- maybe they're more comfortable in Spanish, or they switch between English and Mandarin at home. Conversation Relay can flip both the listening and speaking language on the fly, without dropping the call. It's a small feature with a huge accessibility payoff.",
+        "Some callers start in one language and then ask to speak another -- maybe they're more comfortable in Spanish, or they switch between English and Mandarin at home. When the agent detects that request, Conversation Relay can change both its listening and speaking language during the call. It's a small feature with a huge accessibility payoff.",
+    },
+
+    {
+      type: "callout",
+      audience: "explorer",
+      variant: "info",
+      content:
+        "Your chosen English voice may sound different after you switch to Spanish. Some presets support English only, so the workshop uses a compatible Spanish voice for that part of the call.",
     },
 
     {
       type: "prose",
       audience: "builder",
       content:
-        "Conversation Relay can switch languages **mid-call** -- both the speech-to-text side (understanding the caller) and the text-to-speech side (the voice the caller hears). If a caller switches from English to Spanish, the agent adapts instantly without dropping the call.",
+        "Conversation Relay can switch languages **mid-call** -- both the speech-to-text side (understanding the caller) and the text-to-speech side (the voice the caller hears). Your server decides when to send that switch. For a reliable first test, ask in English to switch to Spanish, then continue in Spanish after the agent changes language.",
     },
 
     {
@@ -34,7 +42,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "To switch languages, send a `language` message over the WebSocket. Twilio immediately updates both how it listens and which voice it uses:",
+        "To switch languages, send a `language` message over the WebSocket. Twilio applies the new speech recognition and text-to-speech languages to subsequent turns:",
     },
 
     {
@@ -56,6 +64,14 @@ export default {
         "Each field is individually optional, but **at least one must be present**. You could keep transcription in English while switching just the speaking voice, but for almost every real caller the STT and TTS languages should move together -- otherwise the agent hears Spanish and answers in an English voice, or vice versa. The implementation below sends both fields on every switch for that reason.",
     },
 
+    {
+      type: "callout",
+      audience: "builder",
+      variant: "info",
+      content:
+        "**Prepare your existing `/twiml` response for two languages.** Remove its fixed `voice=\"...\"` and `ttsProvider=\"...\"` attributes; keep your greeting, `language=\"en-US\"`, Deepgram transcription, and reflex settings. [Twilio documents default ElevenLabs voices for both `en-US` and `es-ES`](https://www.twilio.com/docs/voice/conversationrelay/voice-configuration#default-voice-settings), so each language has a compatible voice after the switch. This replaces the custom voice chosen in Chapter 3 for the bilingual exercise. If your chosen voice supports both languages, you can restore it after testing; custom voices for each language require Twilio's nested `<Language>` configuration, which the workshop site's shared Call Me flow does not accept.",
+    },
+
     { type: "page-break" },
 
     { type: "section", title: "Detecting Language Switches", audience: "builder" },
@@ -64,7 +80,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "The LLM is the best tool for detecting language changes. When a caller switches to Spanish, the transcribed text contains Spanish words. Add language detection instructions to the system prompt:",
+        "The LLM can decide when to switch after reading the caller's transcription. With `language=\"en-US\"`, an unannounced first Spanish phrase may be transcribed poorly, so have the caller ask in English to switch to Spanish for the workshop test. Replace your existing `SYSTEM_PROMPT` declaration with a version that keeps your chosen persona and adds the language instructions below. `conversationHistory` already uses `SYSTEM_PROMPT`, so do not paste a second prompt variable beside it:",
     },
 
     {
@@ -73,10 +89,16 @@ export default {
       language: "javascript",
       file: "server.js",
       highlight: ["3-10"],
-      code: `const systemPrompt = \`You are a helpful customer service agent.
+      code: `const SYSTEM_PROMPT = \`You are a helpful voice assistant for Twilio-Mart.
+Keep your responses brief -- one to two sentences at most.
+Speak naturally and conversationally.
+Never use markdown, bullet points, or numbered lists.
+If you don't know something, say so honestly.
 
 LANGUAGE DETECTION:
 - You can speak English and Spanish fluently.
+- If the caller asks to switch languages, answer in the requested language
+  on your next response, even when the request was spoken in English.
 - If the caller switches to a different language, respond in that language.
 - When you detect a language switch, include the marker [LANG:xx-XX]
   at the very beginning of your response, where xx-XX is the BCP-47
@@ -93,6 +115,28 @@ LANGUAGE DETECTION:
       type: "prose",
       audience: "builder",
       content:
+        "Twilio includes the active transcription language in each `prompt` message as `lang`. **Replace your existing `handlePrompt` with this version** so the first final caller turn initializes `currentLanguage` from the language you chose in Chapter 3. Do this before adding the response helper below. Until that first spoken turn, the language is unknown; a keypad-triggered response can still send an explicit switch when the AI emits a marker.",
+    },
+
+    {
+      type: "code",
+      audience: "builder",
+      language: "javascript",
+      file: "server.js",
+      code: `function handlePrompt(ws, msg) {
+  const state = stateFor(ws);
+  if (!state.currentLanguage && typeof msg.lang === "string" && msg.lang) {
+    state.currentLanguage = msg.lang;
+  }
+  state.conversationHistory.push({ role: "user", content: msg.voicePrompt });
+  streamResponse(ws);
+}`,
+    },
+
+    {
+      type: "prose",
+      audience: "builder",
+      content:
         "Check the LLM's response for language markers and send the `language` message to Twilio before sending the text to be spoken:",
     },
 
@@ -101,7 +145,7 @@ LANGUAGE DETECTION:
       audience: "builder",
       variant: "info",
       content:
-        "**This is a new function.** Add `processLLMResponse` to your `server.js`; it does not replace anything else.",
+        "**This is a new function.** Add `processLLMResponse` to your `server.js`; it uses the per-call `stateFor(ws)` helper from Step 1.",
     },
 
     {
@@ -109,20 +153,21 @@ LANGUAGE DETECTION:
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      highlight: ["1-27"],
+      highlight: ["1-24"],
       code: `const LANG_MARKER_REGEX = /^\\[LANG:([\\w-]+)\\]/;
 
-let currentLanguage = "en-US";
-
 function processLLMResponse(ws, text) {
+  const state = stateFor(ws);
+  const currentLanguage = state.currentLanguage;
+  text = text.trimStart();
   const match = text.match(LANG_MARKER_REGEX);
 
   if (match) {
     const newLang = match[1];
 
-    if (newLang !== currentLanguage) {
-      console.log(\`Switching language: \${currentLanguage} -> \${newLang}\`);
-      currentLanguage = newLang;
+    if (newLang !== currentLanguage && !state.closed && ws.readyState === 1) {
+      console.log(\`Switching language: \${currentLanguage || "unknown"} -> \${newLang}\`);
+      state.currentLanguage = newLang;
 
       // Tell Twilio to switch STT and TTS
       ws.send(JSON.stringify({
@@ -139,9 +184,7 @@ function processLLMResponse(ws, text) {
   // Send the cleaned text to be spoken. streamResponse calls this per
   // sentence and emits the terminating last=true marker once the full
   // LLM response completes, so we don't set last=true here.
-  if (text) {
-    sendText(ws, text);
-  }
+  if (text) sendText(ws, text);
 }`,
     },
 
@@ -150,7 +193,7 @@ function processLLMResponse(ws, text) {
       audience: "builder",
       variant: "warning",
       content:
-        "The language switch takes effect immediately. Send the `language` message **before** sending the text that should be spoken in the new language. Otherwise Twilio will try to speak Spanish text with an English voice, which sounds garbled.",
+        "Send the `language` message **before** sending the text that should be spoken in the new language. Otherwise Twilio may synthesize Spanish text with the previous English language settings, which can sound wrong.",
     },
 
     { type: "page-break" },
@@ -161,7 +204,7 @@ function processLLMResponse(ws, text) {
       type: "prose",
       audience: "builder",
       content:
-        "**Replace your existing `streamResponse` with this version.** The old one sent every token to Twilio the moment it arrived, which would speak the `[LANG:xx-XX]` marker out loud before the helper had a chance to strip it. The fix is to buffer tokens until a sentence ends, then run each full sentence through `processLLMResponse` before speaking it.",
+        "**Replace your existing `streamResponse` with this version.** The old one sent every token to Twilio the moment it arrived, which would speak the `[LANG:xx-XX]` marker out loud before the helper had a chance to strip it. Buffer tokens until a sentence ends, then run each full sentence through `processLLMResponse` before speaking it. Keep the silence countdown paused throughout this reply and restart it when the reply ends.",
     },
 
     {
@@ -177,24 +220,28 @@ function processLLMResponse(ws, text) {
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      highlight: ["12-27", "30-34"],
+      highlight: ["12-35", "38-44"],
       code: `async function streamResponse(ws) {
-  activeStream = new AbortController();
-
-  const stream = await openai.chat.completions.create(
-    {
-      model: "gpt-5.4-nano",
-      messages: conversationHistory,
-      stream: true,
-    },
-    { signal: activeStream.signal }
-  );
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  const controller = new AbortController();
+  state.activeStream = controller;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
 
   try {
+    const stream = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
+      messages: state.conversationHistory,
+      stream: true,
+    }, { signal: controller.signal });
+
+    if (controller.signal.aborted || state.closed) return;
     let textBuffer = "";
     let assistantText = "";
 
     for await (const chunk of stream) {
+      if (controller.signal.aborted || state.closed) return;
       const token = chunk.choices[0]?.delta?.content ?? "";
       if (!token) continue;
 
@@ -207,8 +254,8 @@ function processLLMResponse(ws, text) {
       // (\\s|$) alternation also flushes when the stream ends on
       // punctuation with no trailing whitespace (short replies
       // like "Hola!" would otherwise only flush at end-of-stream).
-      const match = textBuffer.match(/[.!?](\\s|$)/);
-      if (match) {
+      let match;
+      while ((match = textBuffer.match(/[.!?](\\s|$)/))) {
         const sentenceEnd = match.index + 1;
         const sentence = textBuffer.slice(0, sentenceEnd);
         processLLMResponse(ws, sentence);
@@ -221,11 +268,18 @@ function processLLMResponse(ws, text) {
       processLLMResponse(ws, textBuffer.trim());
     }
     sendText(ws, "", true);
-    conversationHistory.push({ role: "assistant", content: assistantText });
+    state.conversationHistory.push({ role: "assistant", content: assistantText });
   } catch (err) {
-    if (err.name !== "AbortError") throw err;
+    if (controller.signal.aborted || err.name === "AbortError" || state.closed) return;
+    console.error("LLM error:", err.message);
+    const apology = "I'm sorry, I'm having a technical issue. Could you say that again?";
+    sendText(ws, apology, true);
+    state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    activeStream = null;
+    if (state.activeStream === controller) {
+      state.activeStream = null;
+      resetSilenceTimer(ws);
+    }
   }
 }`,
     },
@@ -244,7 +298,7 @@ function processLLMResponse(ws, text) {
       type: "prose",
       audience: "builder",
       content:
-        "Conversation Relay supports a wide range of BCP-47 language codes. Some commonly used ones -- pass any of these values as the `ttsLanguage` or `transcriptionLanguage` in the `language` message:",
+        "Conversation Relay supports a wide range of BCP-47 language codes. These are common examples for the `language` message; check that your selected speech and voice providers support a code before using it:",
     },
 
     {
@@ -281,7 +335,7 @@ function processLLMResponse(ws, text) {
       file: "server.js",
       language: "javascript",
       explanation:
-        "Builds on the previous step by adding a LANGUAGE DETECTION section to the system prompt, a LANG_MARKER_REGEX constant, currentLanguage tracking, and a processLLMResponse function that detects language markers and sends a language switch message to Twilio. streamResponse now buffers tokens into whole sentences and routes each through processLLMResponse, so the [LANG:xx-XX] marker is stripped and the language message reaches Twilio before the new-language text is spoken.",
+        "Builds on the previous step by adding a LANGUAGE DETECTION section to the system prompt, a LANG_MARKER_REGEX constant, currentLanguage tracking from Twilio's first final `prompt.lang`, and a processLLMResponse function that sends language switches. streamResponse buffers tokens into whole sentences so the marker is stripped before speech. This bilingual `/twiml` example keeps the greeting and recognition settings but omits a fixed voice and TTS provider, letting Twilio select its documented defaults for English and Spanish. Preserve your own persona and other settings; restore a custom voice only after confirming it works in both languages.",
       code: `require("dotenv").config();
 const { WebSocketServer } = require("ws");
 const http = require("http");
@@ -307,6 +361,8 @@ If you don't know something, say so honestly.
 
 LANGUAGE DETECTION:
 - You can speak English and Spanish fluently.
+- If the caller asks to switch languages, answer in the requested language
+  on your next response, even when the request was spoken in English.
 - If the caller switches to a different language, respond in that language.
 - When you detect a language switch, include the marker [LANG:xx-XX]
   at the very beginning of your response, where xx-XX is the BCP-47
@@ -315,155 +371,114 @@ LANGUAGE DETECTION:
 
 const SILENCE_TIMEOUT_MS = 8000;
 const MAX_SILENCE_PROMPTS = 2;
+const FAREWELL_DELAY_MS = 6000;
+
 const LANG_MARKER_REGEX = /^\\[LANG:([\\w-]+)\\]/;
 
-// Module-scope state (single-caller workshop server)
-const conversationHistory = [
-  { role: "system", content: SYSTEM_PROMPT },
-];
-let activeStream = null;
-let silenceTimer = null;
-let silencePromptCount = 0;
-let currentLanguage = "en-US";
+const callStates = new WeakMap();
+
+function stateFor(ws) {
+  let state = callStates.get(ws);
+  if (!state) {
+    state = {
+      conversationHistory: [{ role: "system", content: SYSTEM_PROMPT }],
+      activeStream: null,
+      closed: false,
+      silenceTimer: null,
+      endTimer: null,
+      silencePromptCount: 0,
+      currentLanguage: null,
+    };
+    callStates.set(ws, state);
+  }
+  return state;
+}
 
 function sendText(ws, token, last = false) {
+  if (ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: "text", token, last }));
 }
 
-function processLLMResponse(ws, text) {
-  const match = text.match(LANG_MARKER_REGEX);
-
-  if (match) {
-    const newLang = match[1];
-
-    if (newLang !== currentLanguage) {
-      console.log(\`Switching language: \${currentLanguage} -> \${newLang}\`);
-      currentLanguage = newLang;
-
-      ws.send(JSON.stringify({
-        type: "language",
-        ttsLanguage: newLang,
-        transcriptionLanguage: newLang,
-      }));
-    }
-
-    text = text.replace(LANG_MARKER_REGEX, "").trim();
-  }
-
-  // streamResponse calls this per sentence and emits the terminating
-  // last=true marker once the full LLM response completes.
-  if (text) {
-    sendText(ws, text);
-  }
-}
-
-function resetSilenceTimer(ws) {
-  clearTimeout(silenceTimer);
-  silencePromptCount = 0;
-
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
-  }, SILENCE_TIMEOUT_MS);
-}
-
-function handleSilence(ws) {
-  if (ws.readyState !== ws.OPEN) return;
-
-  silencePromptCount++;
-
-  if (silencePromptCount >= MAX_SILENCE_PROMPTS) {
-    sendText(ws, "It seems like you may have stepped away. " +
-      "I'll end the call for now. Feel free to call back anytime!", true);
-    ws.send(JSON.stringify({ type: "end" }));
-    return;
-  }
-
-  const prompts = [
-    "Are you still there? Take your time -- I'm here whenever you're ready.",
-    "I'm still here if you need anything. Is there something I can help with?",
-  ];
-
-  sendText(ws, prompts[silencePromptCount - 1], true);
-
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
-  }, SILENCE_TIMEOUT_MS);
-}
-
 async function streamResponse(ws) {
-  activeStream = new AbortController();
-
-  const stream = await openai.chat.completions.create(
-    {
-      model: "gpt-5.4-nano",
-      messages: conversationHistory,
-      stream: true,
-    },
-    { signal: activeStream.signal }
-  );
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  const controller = new AbortController();
+  state.activeStream = controller;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
 
   try {
+    const stream = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
+      messages: state.conversationHistory,
+      stream: true,
+    }, { signal: controller.signal });
+
+    if (controller.signal.aborted || state.closed) return;
     let textBuffer = "";
     let assistantText = "";
-
     for await (const chunk of stream) {
+      if (controller.signal.aborted || state.closed) return;
       const token = chunk.choices[0]?.delta?.content ?? "";
       if (!token) continue;
-
       textBuffer += token;
       assistantText += token;
 
-      // Flush whole sentences through processLLMResponse so the
-      // [LANG:xx-XX] marker (if any) is stripped and the language
-      // message reaches Twilio before any text is spoken. The
-      // (\\s|$) alternation also flushes when the stream ends on
-      // punctuation with no trailing whitespace (short replies
-      // like "Hola!" would otherwise only flush at end-of-stream).
-      const match = textBuffer.match(/[.!?](\\s|$)/);
-      if (match) {
+      // Inspect whole sentences so a [LANG:xx-XX] marker is never spoken.
+      let match;
+      while ((match = textBuffer.match(/[.!?](\\s|$)/))) {
         const sentenceEnd = match.index + 1;
-        const sentence = textBuffer.slice(0, sentenceEnd);
-        processLLMResponse(ws, sentence);
+        processLLMResponse(ws, textBuffer.slice(0, sentenceEnd));
         textBuffer = textBuffer.slice(sentenceEnd + (match[1] ? match[1].length : 0));
       }
     }
-
-    // Flush trailing text after the final sentence terminator.
-    if (textBuffer.trim()) {
-      processLLMResponse(ws, textBuffer.trim());
-    }
+    if (textBuffer.trim()) processLLMResponse(ws, textBuffer.trim());
     sendText(ws, "", true);
-    conversationHistory.push({ role: "assistant", content: assistantText });
+    state.conversationHistory.push({ role: "assistant", content: assistantText });
   } catch (err) {
-    if (err.name !== "AbortError") throw err;
+    if (controller.signal.aborted || err.name === "AbortError" || state.closed) return;
+    console.error("LLM error:", err.message);
+    const apology = "I'm sorry, I'm having a technical issue. Could you say that again?";
+    sendText(ws, apology, true);
+    state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    activeStream = null;
+    if (state.activeStream === controller) {
+      state.activeStream = null;
+      resetSilenceTimer(ws);
+    }
   }
 }
 
 function handlePrompt(ws, msg) {
-  conversationHistory.push({ role: "user", content: msg.voicePrompt });
+  const state = stateFor(ws);
+  if (!state.currentLanguage && typeof msg.lang === "string" && msg.lang) {
+    state.currentLanguage = msg.lang;
+  }
+  state.conversationHistory.push({ role: "user", content: msg.voicePrompt });
   streamResponse(ws);
 }
 
-function handleInterrupt(msg) {
+function handleInterrupt(ws, msg) {
   console.log("Caller interrupted. Heard:", msg.utteranceUntilInterrupt);
 
-  if (activeStream) {
-    activeStream.abort();
-    activeStream = null;
-  }
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  state.activeStream = null;
 
-  const lastMsg = conversationHistory[conversationHistory.length - 1];
+  const lastMsg = state.conversationHistory[state.conversationHistory.length - 1];
   if (lastMsg?.role === "assistant") {
     lastMsg.content = msg.utteranceUntilInterrupt;
+  } else if (msg.utteranceUntilInterrupt) {
+    state.conversationHistory.push({
+      role: "assistant", content: msg.utteranceUntilInterrupt
+    });
   }
 }
 
 function handleDtmfInput(ws, digit) {
   switch (digit) {
     case "1":
-      conversationHistory.push({
+      stateFor(ws).conversationHistory.push({
         role: "user",
         content: "I want to check my order status.",
       });
@@ -473,6 +488,7 @@ function handleDtmfInput(ws, digit) {
     case "2":
       sendText(ws, "Let me transfer you to a representative. " +
         "Please hold for a moment.", true);
+      // Chapter 5 adds the actual transfer handoff.
       break;
 
     case "0":
@@ -488,8 +504,76 @@ function handleDtmfInput(ws, digit) {
   }
 }
 
+// Send DTMF tones outbound when another IVR needs them.
+function sendDigits(ws, digits) {
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: "sendDigits", digits }));
+}
+
+function processLLMResponse(ws, text) {
+  const state = stateFor(ws);
+  text = text.trimStart();
+  const match = text.match(LANG_MARKER_REGEX);
+  if (match) {
+    const newLang = match[1];
+    if (newLang !== state.currentLanguage && !state.closed && ws.readyState === 1) {
+      console.log("Switching language: " + state.currentLanguage + " -> " + newLang);
+      state.currentLanguage = newLang;
+      ws.send(JSON.stringify({
+        type: "language",
+        ttsLanguage: newLang,
+        transcriptionLanguage: newLang,
+      }));
+    }
+    text = text.replace(LANG_MARKER_REGEX, "").trim();
+  }
+  if (text) sendText(ws, text);
+}
+
+function resetSilenceTimer(ws) {
+  const state = stateFor(ws);
+  clearTimeout(state.silenceTimer);
+  clearTimeout(state.endTimer);
+  state.silenceTimer = null;
+  state.endTimer = null;
+  if (state.closed || state.activeStream || ws.readyState !== 1) return;
+  state.silencePromptCount = 0;
+  state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
+}
+
+function handleSilence(ws) {
+  const state = stateFor(ws);
+  if (state.closed || ws.readyState !== 1) return;
+  state.silenceTimer = null;
+  state.silencePromptCount++;
+
+  const prompts = [
+    "Are you still there? Take your time -- I'm here whenever you're ready.",
+    "I'm still here if you need anything. Is there something I can help with?",
+  ];
+  if (state.silencePromptCount <= MAX_SILENCE_PROMPTS) {
+    sendText(ws, prompts[state.silencePromptCount - 1], true);
+    state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
+    return;
+  }
+
+  sendText(ws, "I'll end the call now. Please call back anytime.", true);
+  state.endTimer = setTimeout(() => {
+    if (state.closed || ws.readyState !== 1) return;
+    state.closed = true;
+    ws.send(JSON.stringify({ type: "end" }));
+  }, FAREWELL_DELAY_MS);
+}
+
 function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || stateFor(ws).closed) return;
 
   switch (msg.type) {
     case "setup":
@@ -499,12 +583,12 @@ function handleMessage(ws, data) {
 
     case "prompt":
       resetSilenceTimer(ws);
-      handlePrompt(ws, msg);
+      if (msg.last !== false && typeof msg.voicePrompt === "string") handlePrompt(ws, msg);
       break;
 
     case "interrupt":
+      handleInterrupt(ws, msg);
       resetSilenceTimer(ws);
-      handleInterrupt(msg);
       break;
 
     case "dtmf":
@@ -525,6 +609,9 @@ const server = http.createServer(async (req, res) => {
   <Connect>
     <ConversationRelay
       url="wss://\${req.headers.host}/ws"
+      language="en-US"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
       welcomeGreeting="Hello! How can I help you today?"
       dtmfDetection="true"
       interruptible="any"
@@ -571,7 +658,11 @@ wss.on("connection", (ws) => {
   ws.on("message", (data) => handleMessage(ws, data));
 
   ws.on("close", () => {
-    clearTimeout(silenceTimer);
+    const state = stateFor(ws);
+    state.closed = true;
+    state.activeStream?.abort();
+    clearTimeout(state.silenceTimer);
+    clearTimeout(state.endTimer);
     console.log("Call ended, timers cleared.");
   });
 
@@ -590,7 +681,7 @@ server.listen(PORT, () => {
       audience: "explorer",
       title: "What It Sounds Like to the Caller",
       content:
-        "On the test call coming up next: if you speak Spanish, start in English and switch mid-sentence. If you don't, read this phrase out loud -- *\"Hola, ¿cómo estás?\"* (roughly *\"OH-lah, KOH-moh es-TAHS\"*). Either way the agent keeps the same tone but flips to a Spanish voice that sounds natural in that language. No menu, no \"press 2 for Spanish\" -- the change happens the moment the agent hears the shift, and flips back when you return to English.",
+        "On the test call coming up next, ask in English, *\"Could we switch to Spanish?\"* After the agent changes languages, say *\"Hola, ¿cómo estás?\"* (roughly *\"OH-lah, KOH-moh es-TAHS\"*). The agent should answer in Spanish. This clear request gives the language switch a better chance than beginning with Spanish while speech recognition is still set to English. You can ask to return to English later in the same call.",
     },
   ],
 } satisfies StepDefinition;

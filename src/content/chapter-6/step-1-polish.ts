@@ -72,7 +72,7 @@ export default {
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      code: `const systemPrompt = \`You are Jake from Twilio Pizza Co.
+      code: `const SYSTEM_PROMPT = \`You are Jake from Twilio Pizza Co.
 
 PERSONALITY:
 - Warm, professional, and concise
@@ -96,6 +96,15 @@ VOICE GUIDELINES:
 - Avoid lists longer than 3 items (offer to go one by one)
 - Confirm important details by repeating them back
 - Use filler phrases naturally: "Let me check that for you"
+
+LANGUAGE DETECTION:
+- You can speak English and Spanish fluently.
+- If the caller asks to switch languages, answer in the requested language
+  on your next response, even when the request was spoken in English.
+- If the caller switches languages, respond in that language.
+- Begin the first response after a switch with [LANG:xx-XX], where
+  xx-XX is the language code (for example, [LANG:es-ES]).
+- Only include the marker when the language changes.
 \`;`,
     },
 
@@ -115,7 +124,15 @@ VOICE GUIDELINES:
       audience: "builder",
       variant: "info",
       content:
-        "**This replaces the `<ConversationRelay>` element in your existing `/twiml` handler** -- don't paste it as a second route. You already have a TwiML response with `dtmfDetection`, `interruptible`, and `reportInputDuringAgentSpeech` from the reflexes chapter, plus `language`, `transcriptionProvider`, and `speechModel` from the language configuration step; this step adds new attributes (`voice`, `ttsProvider`, `interruptSensitivity`, `welcomeGreetingInterruptible`, `hints`) onto the same element and introduces `action=\"/call-ended\"` on `<Connect>`.",
+        "**This replaces the `<ConversationRelay>` element in your existing `/twiml` handler** -- don't paste it as a second route. Keep `dtmfDetection`, `interruptible`, and `reportInputDuringAgentSpeech` from the reflexes chapter, plus `language`, `transcriptionProvider`, and `speechModel` from language configuration. Add `interruptSensitivity`, `welcomeGreetingInterruptible`, and `hints` on that same element, and `action=\"/call-ended\"` on `<Connect>`. This bilingual example omits `voice` and `ttsProvider` so [Twilio uses its documented English and Spanish default voices](https://www.twilio.com/docs/voice/conversationrelay/voice-configuration#default-voice-settings). Restore a custom voice only after confirming it supports both languages.",
+    },
+
+    {
+      type: "callout",
+      audience: "builder",
+      variant: "info",
+      content:
+        "For live handoff, put a second reachable US or Canadian phone number in your Codespace's `workshop/.env`, for example `HANDOFF_PHONE_NUMBER=+14155552671` for a teammate or facilitator, then restart `npm run dev`. Use a number different from the phone receiving Call Me so the transfer can ring a person. The value must be E.164. Public Codespaces do not have a destination preconfigured; without one, the agent says live transfer is unavailable and keeps the conversation open. On a site-initiated Builder call, the site checks the Codespace's `/call-ended` response when handoff is requested and allows only a US or Canadian destination before returning dialing instructions to Twilio. `npm run call` uses the credentials in your `.env`. **Whichever account places the call must be upgraded for `<ConversationRelay>`**; [trial accounts block it](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), so verifying a phone number alone is insufficient.",
     },
 
     {
@@ -123,13 +140,11 @@ VOICE GUIDELINES:
       audience: "builder",
       language: "xml",
       file: "twiml-response",
-      highlight: [11, 12, 13],
+      highlight: [10, 12, 14],
       code: `<Response>
   <Connect action="/call-ended">
     <ConversationRelay
       url="wss://<your-server-host>/ws"
-      voice="en-US-Chirp3-HD-Aoede"
-      ttsProvider="Google"
       language="en-US"
       transcriptionProvider="Deepgram"
       speechModel="nova-3-general"
@@ -138,7 +153,7 @@ VOICE GUIDELINES:
       interruptSensitivity="medium"
       welcomeGreeting="Hello! How can I help you today?"
       welcomeGreetingInterruptible="speech"
-      reportInputDuringAgentSpeech="dtmf"
+      reportInputDuringAgentSpeech="any"
       hints="Twilio Pizza Co., order status, transfer, refund"
     />
   </Connect>
@@ -149,7 +164,7 @@ VOICE GUIDELINES:
       type: "prose",
       audience: "builder",
       content:
-        "**`welcomeGreetingInterruptible`** -- same values as `interruptible` (`none`, `dtmf`, `speech`, `any`); applies only to the welcome greeting. Platform default is `\"any\"`; `\"speech\"` is a good explicit choice because callers can interject without accidentally triggering on a DTMF tone.\n\n**`reportInputDuringAgentSpeech`** -- controls whether Twilio forwards speech or DTMF that arrives *while* the agent is talking, without interrupting. Default is `\"none\"`. Setting it to `\"dtmf\"` is handy for IVR-style \"press 0 for an operator\" flows.\n\n**`hints`** -- comma-separated phrases the transcriber should bias toward. If the agent deals with proper nouns, product SKUs, or acronyms, listing them here improves recognition accuracy.\n\n**`debug`** -- a space-separated list of `debugging`, `speaker-events`, `tokens-played`. Turn this on during development; turn it off before you ship.",
+        "**`welcomeGreetingInterruptible`** -- same values as `interruptible` (`none`, `dtmf`, `speech`, `any`); applies only to the welcome greeting. Platform default is `\"any\"`; `\"speech\"` is a good explicit choice because callers can interject without accidentally triggering on a DTMF tone.\n\n**`reportInputDuringAgentSpeech`** -- controls whether Twilio forwards speech or DTMF that arrives *while* the agent is talking, without interrupting. Default is `\"none\"`. Keep it at `\"any\"` here so both spoken interruptions and keypad shortcuts reach the server.\n\n**`hints`** -- comma-separated phrases the transcriber should bias toward. If the agent deals with proper nouns, product SKUs, or acronyms, listing them here improves recognition accuracy.\n\n**`events`** -- optional space-separated `speaker-events` and `tokens-played` notifications for deeper speech playback diagnostics. The handoff below does not depend on those events because its announcement is a single `<Say>` in the action response.",
     },
 
     { type: "page-break" },
@@ -205,9 +220,16 @@ VOICE GUIDELINES:
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      highlight: ["6-17"],
-      code: `function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+      highlight: ["12-21"],
+      code: `function handleMessage(ws, state, data) {
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
 
   switch (msg.type) {
     // ... existing cases (setup, prompt, interrupt, dtmf) ...
@@ -217,7 +239,7 @@ VOICE GUIDELINES:
       // Don't try to retry automatically -- a second failure in a row
       // would just burn time while the caller waits in silence.
       console.error("⚠️ Conversation Relay error:", msg.description);
-      sendText(ws,
+      sendText(ws, state,
         "I'm having a brief technical issue. " +
         "Could you say that again?",
         true,
@@ -238,15 +260,22 @@ VOICE GUIDELINES:
     { type: "section", audience: "builder", title: "Handle AI Errors Gracefully" },
 
     {
+      type: "prose",
+      audience: "builder",
+      content:
+        "This excerpt shows the error branch of your existing `streamResponse`. Keep the streaming, tool-call, interruption, and silence-timer logic from the previous chapter; do not replace the whole function with this excerpt.",
+    },
+
+    {
       type: "code",
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      code: `async function streamResponse(ws, iteration = 0) {
+      code: `async function streamResponse(ws, state, iteration = 0) {
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
-      messages: conversationHistory,
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
+      messages: state.conversationHistory,
       tools: tools,
       stream: true,
     });
@@ -261,10 +290,12 @@ VOICE GUIDELINES:
       return;
     }
 
-    // Fallback response so the caller is not left hanging
-    sendText(ws, "I'm sorry, I'm having a technical issue. " +
+    // Keep the spoken fallback in this call's history for the next turn.
+    const fallback = "I'm sorry, I'm having a technical issue. " +
       "Could you repeat that, or would you like me to " +
-      "transfer you to a team member?", true);
+      "transfer you to a team member?";
+    sendText(ws, state, fallback, true);
+    state.conversationHistory.push({ role: "assistant", content: fallback });
   }
 }`,
     },
@@ -281,7 +312,7 @@ VOICE GUIDELINES:
       type: "solution",
       audience: "builder",
       explanation:
-        "Both files at the end of the workshop. `tool-handlers.js` is unchanged since the handoff step — included here so you have one tab to paste from if something diverged. `server.js` is the complete polished version with everything: tool calling, interruptions, DTMF, silence detection, language switching, handoff support, and error handling.",
+        "Both files at the end of the workshop. `tool-handlers.js` validates the live handoff destination before ending the AI session. The action URL speaks the transfer announcement once before dialing. `server.js` is the complete polished version with tool calling, interruptions, DTMF, silence detection, language switching, handoff support, and error handling. Each WebSocket connection keeps its own conversation state. The runnable Twilio-Mart prompt below is a fallback; restore your own persona when copying, keeping its tool and language instructions. Keep your speech model, greeting, and other settings too. For the English/Spanish exercise, this `/twiml` example omits a fixed voice and provider so Twilio selects its documented defaults; you may restore a custom voice after verifying it in both languages.",
       files: [
         {
           file: "tool-handlers.js",
@@ -391,9 +422,9 @@ const toolHandlers = {
 
   lookup_order: async ({ order_id }, _ws) => {
     const mockOrders = {
-      "123": { status: "shipped", tracking: "1Z999AA10123456784", eta: "May 7, 2026" },
-      "456": { status: "processing", tracking: null, eta: "May 7, 2026" },
-      "789": { status: "delivered", tracking: "1Z999AA10987654321", eta: "Delivered May 2, 2026" },
+      "123": { status: "shipped", tracking: "1Z999AA10123456784", eta: "tomorrow" },
+      "456": { status: "processing", tracking: null, eta: "not available yet" },
+      "789": { status: "delivered", tracking: "1Z999AA10987654321", eta: "already delivered" },
     };
     const order = mockOrders[order_id];
     if (!order) {
@@ -413,25 +444,29 @@ const toolHandlers = {
   },
 
   transfer_to_agent: async ({ reason, department, summary }, ws) => {
-    ws.send(JSON.stringify({
-      type: "text",
-      token: "I understand you need more help with this. " +
-        "Let me connect you with a team member who can assist.",
-      last: true
-    }));
-
-    setTimeout(() => {
+    if (ws.readyState !== 1) return { status: "closed" };
+    const handoffNumber = process.env.HANDOFF_PHONE_NUMBER || "";
+    if (!/^\\+[1-9]\\d{1,14}$/.test(handoffNumber)) {
       ws.send(JSON.stringify({
-        type: "end",
-        handoffData: JSON.stringify({
-          reasonCode: "live-agent-handoff",
-          reason,
-          department: department || "general",
-          summary,
-          timestamp: new Date().toISOString()
-        })
+        type: "text",
+        token: "Sorry, live transfer is unavailable right now. " +
+          "I can still help here.",
+        last: true
       }));
-    }, 2000);
+      return { status: "unavailable" };
+    }
+
+    // The action URL speaks the transfer announcement before dialing.
+    ws.send(JSON.stringify({
+      type: "end",
+      handoffData: JSON.stringify({
+        reasonCode: "live-agent-handoff",
+        reason,
+        department: department || "general",
+        summary,
+        timestamp: new Date().toISOString()
+      })
+    }));
 
     return { status: "transferring" };
   }
@@ -449,7 +484,7 @@ const OpenAI = require("openai");
 const twilio = require("twilio");
 const { tools, toolHandlers } = require("./tool-handlers.js");
 
-const PORT = 8080;
+const PORT = Number(process.env.PORT || 8080);
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -461,33 +496,61 @@ const twilioClient = twilio(
 );
 
 // --- System prompt ---
-// Paste your persona's SYSTEM_PROMPT here, layered with the
-// PERSONALITY / CAPABILITIES / BOUNDARIES / VOICE GUIDELINES / LANGUAGE
-// DETECTION structure shown in the Jake example above. Don't overwrite
-// your persona with the example verbatim.
+// This works as-is. Replace the Twilio-Mart identity with your own
+// persona, but keep the tool and language-switching instructions.
 
-const SYSTEM_PROMPT = \`<-- paste your SYSTEM_PROMPT here -->\`;
+const SYSTEM_PROMPT = \`You are a helpful voice assistant for Twilio-Mart.
+Speak warmly and naturally in one or two short sentences. Do not use markdown,
+long lists, or mention being an AI.
+Use lookup_order for order status, check_weather for weather, and
+transfer_to_agent when the caller asks for a person. Never invent tool results.
+If information is unavailable, say so and offer to transfer the caller.
+You can speak English and Spanish. Answer in the language the caller requests
+or uses. On the first reply after changing to Spanish, start with [LANG:es-ES].
+On the first reply after changing to English, start with [LANG:en-US].
+Only include a language marker when the language changes; never explain it.\`;
 
-// --- Module-scope state (single-caller workshop server) ---
-
-const conversationHistory = [
-  { role: "system", content: SYSTEM_PROMPT },
-];
-
-let activeStream = null;
-
+// Each WebSocket connection gets its own conversation and timers.
 const SILENCE_TIMEOUT_MS = 8000;
 const MAX_SILENCE_PROMPTS = 2;
-let silenceTimer = null;
-let silencePromptCount = 0;
+const FAREWELL_DELAY_MS = 6000;
 
-let currentLanguage = "en-US";
 const LANG_MARKER_REGEX = /^\\[LANG:([\\w-]+)\\]/;
 
 // --- Helpers ---
 
-function sendText(ws, token, last = false) {
-  ws.send(JSON.stringify({ type: "text", token, last }));
+function createCallState() {
+  return {
+    conversationHistory: [{ role: "system", content: SYSTEM_PROMPT }],
+    activeStream: null,
+    silenceTimer: null,
+    endTimer: null,
+    silencePromptCount: 0,
+    currentLanguage: null,
+    ending: false,
+    closed: false,
+  };
+}
+
+function clearCallTimers(state) {
+  clearTimeout(state.silenceTimer);
+  clearTimeout(state.endTimer);
+  state.silenceTimer = null;
+  state.endTimer = null;
+}
+
+function sendMessage(ws, state, message) {
+  if (state.closed || ws.readyState !== 1) return;
+  ws.send(JSON.stringify(message));
+}
+
+function sendText(ws, state, token, last = false) {
+  sendMessage(ws, state, { type: "text", token, last });
+}
+
+function cancelActiveStream(state) {
+  state.activeStream?.abort();
+  state.activeStream = null;
 }
 
 // --- LLM streaming with tool-call support ---
@@ -495,22 +558,28 @@ function sendText(ws, token, last = false) {
 const MAX_TOOL_ITERATIONS = 5;
 const SLOW_TOOLS = ["lookup_order"];
 
-async function streamResponse(ws, iteration = 0) {
-  activeStream = new AbortController();
-
-  const stream = await openai.chat.completions.create({
-    model: "gpt-5.4-nano",
-    messages: conversationHistory,
-    tools: tools,
-    stream: true,
-  }, { signal: activeStream.signal });
-
+async function streamResponse(ws, state, iteration = 0) {
+  if (state.closed || state.ending) return;
+  const controller = new AbortController();
+  state.activeStream = controller;
+  clearTimeout(state.silenceTimer);
+  state.silenceTimer = null;
   let textBuffer = "";
   let fullAssistantText = "";
   let toolCalls = [];
 
   try {
+    const stream = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
+      messages: state.conversationHistory,
+      tools: tools,
+      stream: true,
+    }, { signal: controller.signal });
+
+    if (controller.signal.aborted || state.closed || state.ending) return;
+
     for await (const chunk of stream) {
+      if (controller.signal.aborted || state.closed || state.ending) return;
       const delta = chunk.choices[0]?.delta;
       const finishReason = chunk.choices[0]?.finish_reason;
 
@@ -520,7 +589,7 @@ async function streamResponse(ws, iteration = 0) {
         const sentenceEnd = textBuffer.search(/[.!?]\\s/);
         if (sentenceEnd !== -1) {
           const sentence = textBuffer.slice(0, sentenceEnd + 1);
-          processLLMResponse(ws, sentence);
+          processLLMResponse(ws, state, sentence);
           textBuffer = textBuffer.slice(sentenceEnd + 2);
         }
       }
@@ -542,50 +611,56 @@ async function streamResponse(ws, iteration = 0) {
       }
 
       if (finishReason === "tool_calls") {
-        activeStream = null;
-        await handleToolCalls(ws, toolCalls, iteration);
+        await handleToolCalls(ws, state, toolCalls, iteration, controller.signal);
         return;
       }
 
       if (finishReason === "stop") {
         if (textBuffer.trim()) {
-          processLLMResponse(ws, textBuffer.trim());
+          processLLMResponse(ws, state, textBuffer.trim());
           textBuffer = "";
         }
-        sendText(ws, "", true);
+        sendText(ws, state, "", true);
         if (fullAssistantText.trim()) {
-          conversationHistory.push({
+          state.conversationHistory.push({
             role: "assistant",
             content: fullAssistantText.trim(),
           });
         }
+        return;
       }
     }
   } catch (err) {
-    if (err.name === "AbortError") return;
+    if (controller.signal.aborted || err.name === "AbortError" ||
+        state.closed || state.ending) return;
 
     console.error("LLM error:", err.message);
-    sendText(ws, "I'm sorry, I'm having a technical issue. " +
+    const fallback = "I'm sorry, I'm having a technical issue. " +
       "Could you repeat that, or would you like me to " +
-      "transfer you to a team member?", true);
+      "transfer you to a team member?";
+    sendText(ws, state, fallback, true);
+    state.conversationHistory.push({ role: "assistant", content: fallback });
   } finally {
-    // Only null activeStream on the outermost call; the tool-call branch
-    // already nulled it before recursing into the next stream.
-    if (iteration === 0) activeStream = null;
+    // A recursive tool response may already have installed a new controller.
+    if (state.activeStream === controller) {
+      state.activeStream = null;
+      resetSilenceTimer(ws, state);
+    }
   }
 }
 
-async function handleToolCalls(ws, toolCalls, iteration = 0) {
+async function handleToolCalls(ws, state, toolCalls, iteration, signal) {
+  if (signal.aborted || state.closed || state.ending) return;
   if (iteration >= MAX_TOOL_ITERATIONS) {
-    sendText(ws, "I'm having trouble processing that. Can you try rephrasing?", true);
+    sendText(ws, state, "I'm having trouble processing that. Can you try rephrasing?", true);
     return;
   }
 
   if (toolCalls.some(tc => SLOW_TOOLS.includes(tc.function.name))) {
-    sendText(ws, "One moment while I look that up...", true);
+    sendText(ws, state, "One moment while I look that up...", true);
   }
 
-  conversationHistory.push({
+  const assistantToolCall = {
     role: "assistant",
     content: null,
     tool_calls: toolCalls.map(tc => ({
@@ -593,9 +668,11 @@ async function handleToolCalls(ws, toolCalls, iteration = 0) {
       type: "function",
       function: { name: tc.function.name, arguments: tc.function.arguments }
     }))
-  });
+  };
+  const toolMessages = [];
 
   for (const toolCall of toolCalls) {
+    if (signal.aborted || state.closed || state.ending) return;
     const fnName = toolCall.function.name;
 
     let result;
@@ -611,55 +688,101 @@ async function handleToolCalls(ws, toolCalls, iteration = 0) {
       result = { error: "Tool failed: " + err.message };
     }
 
-    conversationHistory.push({
+    if (signal.aborted || state.closed || state.ending) return;
+    toolMessages.push({
       role: "tool",
       tool_call_id: toolCall.id,
       content: JSON.stringify(result)
     });
+
+    if (fnName === "transfer_to_agent" &&
+        (result?.status === "transferring" || result?.status === "unavailable")) {
+      // This loop stops here; omit any later, unhandled parallel tool calls.
+      assistantToolCall.tool_calls.length = toolMessages.length;
+      state.conversationHistory.push(assistantToolCall, ...toolMessages);
+      if (result.status === "transferring") {
+        state.ending = true;
+        clearCallTimers(state);
+      } else {
+        state.conversationHistory.push({
+          role: "assistant",
+          content: "Sorry, live transfer is unavailable right now. I can still help here."
+        });
+      }
+      return;
+    }
   }
 
-  await streamResponse(ws, iteration + 1);
+  if (signal.aborted || state.closed || state.ending) return;
+  state.conversationHistory.push(assistantToolCall, ...toolMessages);
+  await streamResponse(ws, state, iteration + 1);
 }
 
 // --- Conversation handlers ---
 
-function handleInterrupt(msg) {
+function handleInterrupt(state, msg) {
   console.log("Caller interrupted. Heard:", msg.utteranceUntilInterrupt);
 
-  if (activeStream) {
-    activeStream.abort();
-    activeStream = null;
-  }
+  cancelActiveStream(state);
 
-  const lastMsg = conversationHistory[conversationHistory.length - 1];
-  if (lastMsg?.role === "assistant") {
+  const lastMsg = state.conversationHistory[state.conversationHistory.length - 1];
+  if (lastMsg?.role === "assistant" &&
+      typeof msg.utteranceUntilInterrupt === "string") {
     lastMsg.content = msg.utteranceUntilInterrupt;
+  } else if (typeof msg.utteranceUntilInterrupt === "string" &&
+             msg.utteranceUntilInterrupt) {
+    // The assistant reply may not have finished streaming yet.
+    state.conversationHistory.push({
+      role: "assistant",
+      content: msg.utteranceUntilInterrupt,
+    });
   }
 }
 
-function handleDtmfInput(ws, digit) {
+async function handleDtmfInput(ws, state, digit) {
+  cancelActiveStream(state);
   switch (digit) {
     case "1":
-      conversationHistory.push({
+      state.conversationHistory.push({
         role: "user",
         content: "I want to check my order status."
       });
-      streamResponse(ws);
+      streamResponse(ws, state);
       break;
 
     case "2":
-      sendText(ws, "Let me transfer you to a representative. " +
-        "Please hold for a moment.", true);
+      state.ending = true;
+      clearCallTimers(state);
+      try {
+        const result = await toolHandlers.transfer_to_agent({
+          reason: "Caller pressed 2 for a representative",
+          department: "general",
+          summary: "Caller requested a representative using the keypad."
+        }, ws);
+        if (result?.status === "transferring") break;
+        state.ending = false;
+        if (result?.status !== "unavailable") {
+          sendText(ws, state, "I'm sorry, I couldn't start the transfer. " +
+            "Please try again.", true);
+        }
+        resetSilenceTimer(ws, state);
+      } catch (err) {
+        state.ending = false;
+        console.error("Handoff error:", err.message);
+        sendText(ws, state, "I'm sorry, I couldn't start the transfer. " +
+          "Please try again.", true);
+        resetSilenceTimer(ws, state);
+      }
       break;
 
     case "0":
-      sendText(ws, "Returning to the main menu. " +
+      sendText(ws, state, "Returning to the main menu. " +
         "Press 1 for order status, 2 for a representative, " +
         "or just tell me what you need.", true);
       break;
 
     default:
-      sendText(ws, "I didn't recognize that option. " +
+      sendText(ws, state, "I didn't recognize that option. " +
         "Press 1 for order status, or 2 for a representative.", true);
       break;
   }
@@ -667,22 +790,29 @@ function handleDtmfInput(ws, digit) {
 
 // --- Silence detection ---
 
-function resetSilenceTimer(ws) {
-  clearTimeout(silenceTimer);
-  silencePromptCount = 0;
+function resetSilenceTimer(ws, state) {
+  clearCallTimers(state);
+  state.silencePromptCount = 0;
+  if (state.closed || state.ending || state.activeStream || ws.readyState !== 1) return;
 
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
+  state.silenceTimer = setTimeout(() => {
+    handleSilence(ws, state);
   }, SILENCE_TIMEOUT_MS);
 }
 
-function handleSilence(ws) {
-  silencePromptCount++;
+function handleSilence(ws, state) {
+  if (state.closed || state.ending) return;
+  state.silenceTimer = null;
+  state.silencePromptCount++;
 
-  if (silencePromptCount >= MAX_SILENCE_PROMPTS) {
-    sendText(ws, "It seems like you may have stepped away. " +
-      "I'll end the call for now. Feel free to call back anytime!", true);
-    ws.send(JSON.stringify({ type: "end" }));
+  if (state.silencePromptCount > MAX_SILENCE_PROMPTS) {
+    sendText(ws, state, "I'll end the call now. Please call back anytime.", true);
+    // Give the short farewell time to play before ending the relay.
+    state.endTimer = setTimeout(() => {
+      sendMessage(ws, state, { type: "end" });
+      state.ending = true;
+      clearCallTimers(state);
+    }, FAREWELL_DELAY_MS);
     return;
   }
 
@@ -691,69 +821,83 @@ function handleSilence(ws) {
     "I'm still here if you need anything. Is there something I can help with?",
   ];
 
-  sendText(ws, prompts[silencePromptCount - 1], true);
+  sendText(ws, state, prompts[state.silencePromptCount - 1], true);
 
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
+  state.silenceTimer = setTimeout(() => {
+    handleSilence(ws, state);
   }, SILENCE_TIMEOUT_MS);
 }
 
 // --- Language switching ---
 
-function processLLMResponse(ws, text) {
+function processLLMResponse(ws, state, text) {
+  text = text.trimStart();
   const match = text.match(LANG_MARKER_REGEX);
 
   if (match) {
     const newLang = match[1];
 
-    if (newLang !== currentLanguage) {
-      console.log(\`Switching language: \${currentLanguage} -> \${newLang}\`);
-      currentLanguage = newLang;
+    if (newLang !== state.currentLanguage) {
+      console.log(\`Switching language: \${state.currentLanguage} -> \${newLang}\`);
+      state.currentLanguage = newLang;
 
-      ws.send(JSON.stringify({
+      sendMessage(ws, state, {
         type: "language",
         ttsLanguage: newLang,
         transcriptionLanguage: newLang
-      }));
+      });
     }
 
     text = text.replace(LANG_MARKER_REGEX, "").trim();
   }
 
   if (text) {
-    sendText(ws, text);
+    sendText(ws, state, text);
   }
 }
 
 // --- WebSocket message dispatcher ---
 
-function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+function handleMessage(ws, state, data) {
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || Array.isArray(msg) ||
+      state.closed || state.ending) return;
 
   switch (msg.type) {
     case "setup":
-      resetSilenceTimer(ws);
+      resetSilenceTimer(ws, state);
       break;
 
     case "prompt":
-      resetSilenceTimer(ws);
-      conversationHistory.push({ role: "user", content: msg.voicePrompt });
-      streamResponse(ws);
+      if (msg.last === false || typeof msg.voicePrompt !== "string") break;
+      if (!state.currentLanguage && typeof msg.lang === "string" && msg.lang) {
+        state.currentLanguage = msg.lang;
+      }
+      cancelActiveStream(state);
+      resetSilenceTimer(ws, state);
+      state.conversationHistory.push({ role: "user", content: msg.voicePrompt });
+      streamResponse(ws, state);
       break;
 
     case "interrupt":
-      resetSilenceTimer(ws);
-      handleInterrupt(msg);
+      handleInterrupt(state, msg);
+      resetSilenceTimer(ws, state);
       break;
 
     case "dtmf":
-      resetSilenceTimer(ws);
-      handleDtmfInput(ws, msg.digit);
+      handleDtmfInput(ws, state, msg.digit);
+      resetSilenceTimer(ws, state);
       break;
 
     case "error":
       console.error("Conversation Relay error:", msg.description);
-      sendText(ws,
+      sendText(ws, state,
         "I'm having a brief technical issue. " +
         "Could you say that again?",
         true,
@@ -774,8 +918,6 @@ const server = http.createServer(async (req, res) => {
   <Connect action="/call-ended">
     <ConversationRelay
       url="wss://\${req.headers.host}/ws"
-      voice="en-US-Chirp3-HD-Aoede"
-      ttsProvider="Google"
       language="en-US"
       transcriptionProvider="Deepgram"
       speechModel="nova-3-general"
@@ -784,7 +926,7 @@ const server = http.createServer(async (req, res) => {
       interruptSensitivity="medium"
       welcomeGreeting="Hello! How can I help you today?"
       welcomeGreetingInterruptible="speech"
-      reportInputDuringAgentSpeech="dtmf"
+      reportInputDuringAgentSpeech="any"
       hints="Twilio Pizza Co., order status, transfer, refund"
     />
   </Connect>
@@ -821,22 +963,33 @@ const server = http.createServer(async (req, res) => {
     req.on("end", () => {
       const params = new URLSearchParams(body);
       const handoffData = params.get("HandoffData");
-
-      let twiml;
+      let data = null;
       if (handoffData) {
-        const data = JSON.parse(handoffData);
+        try {
+          data = JSON.parse(handoffData);
+        } catch (err) {
+          console.error("Invalid HandoffData:", err.message);
+        }
+      }
+
+      const handoffNumber = process.env.HANDOFF_PHONE_NUMBER || "";
+      const canTransfer = /^\\+[1-9]\\d{1,14}$/.test(handoffNumber);
+      let twiml;
+      if (data?.reasonCode === "live-agent-handoff" && canTransfer) {
         console.log("Handoff requested:", data.reason);
         console.log("Summary:", data.summary);
-
-        const dialTarget = process.env.HANDOFF_PHONE_NUMBER
-          ? \`<Number>\${process.env.HANDOFF_PHONE_NUMBER}</Number>\`
-          : "<Queue>support</Queue>";
         twiml = \`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say>Please hold while I transfer you to a representative.</Say>
   <Dial>
-    \${dialTarget}
+    <Number>\${handoffNumber}</Number>
   </Dial>
+</Response>\`;
+      } else if (data?.reasonCode === "live-agent-handoff") {
+        twiml = \`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Sorry, live transfer is unavailable right now. Please call back later.</Say>
+  <Hangup />
 </Response>\`;
       } else {
         twiml = \`<?xml version="1.0" encoding="UTF-8"?>
@@ -868,11 +1021,14 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 
 wss.on("connection", (ws) => {
   console.log("New WebSocket connection");
+  const state = createCallState();
 
-  ws.on("message", (data) => handleMessage(ws, data));
+  ws.on("message", (data) => handleMessage(ws, state, data));
 
   ws.on("close", () => {
-    clearTimeout(silenceTimer);
+    state.closed = true;
+    cancelActiveStream(state);
+    clearCallTimers(state);
     console.log("Call ended, timers cleared.");
   });
 

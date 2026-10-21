@@ -64,7 +64,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "**Long-lived connections** -- The server keeps a live connection open for the entire call. Platforms that shut down between requests (like AWS Lambda or Vercel Functions) will not work.\n**Secure connections** -- Twilio requires HTTPS and WSS.\n**Secret storage** -- API keys and credentials need a safe home.\n**Always-on server** -- The process must stay running continuously, not start fresh for each request.",
+        "**Long-lived connections** -- The server keeps a live connection open for the entire call. Platforms that shut down between requests (like AWS Lambda or Vercel Functions) will not work.\n**Secure connections** -- Twilio requires HTTPS and WSS.\n**Secret storage** -- API keys and credentials need a safe home.\n**Access control** -- Block public call-creation routes and verify Twilio's signature before accepting a voice WebSocket.\n**Always-on server** -- The process must stay running continuously, not start fresh for each request.",
     },
 
     {
@@ -72,10 +72,42 @@ export default {
       audience: "builder",
       variant: "warning",
       content:
-        "Do **not** deploy to serverless platforms like AWS Lambda, Vercel Functions, or Cloudflare Workers. These have execution time limits and do not support persistent WebSocket connections. Calls will drop after a few seconds.",
+        "Deploy this long-running Node.js server to a host that keeps the process and WebSocket connection alive for each call. Deploying `server.js` unchanged as a short-lived serverless function will not keep a Conversation Relay call connected.",
     },
 
     { type: "page-break" },
+
+    { type: "section", audience: "builder", title: "Prepare Your Builder Server" },
+
+    {
+      type: "callout",
+      audience: "builder",
+      variant: "warning",
+      content:
+        "**Secure the server before giving it a public address.** The Codespace's protected proxy blocks public `/call` requests and checks Twilio's signature on `/ws`, but a bare `server.js` deployment does not include that proxy. Remove or authenticate the `/call` route so visitors cannot spend your Twilio credit, and validate `X-Twilio-Signature` on WebSocket upgrades so strangers cannot spend your OpenAI credit. Apply equivalent controls before using any of the hosting options below.",
+    },
+
+    {
+      type: "prose",
+      audience: "builder",
+      content:
+        "Your finished agent is in `workshop/`, separate from the companion Next.js app at the repository root. Push `workshop/server.js`, `workshop/tool-handlers.js`, `workshop/package.json`, and `workshop/package-lock.json` to a GitHub fork or repository you control. For Railway and Render, set the service root directory to `workshop/` so their install and start commands run against the agent.",
+    },
+
+    {
+      type: "prose",
+      audience: "builder",
+      content:
+        "The final `workshop/server.js` from the previous step already reads the host's `PORT` and calls `server.listen(PORT)`. If you are deploying an earlier version with `const PORT = 8080`, replace that existing declaration with the line below and keep its existing `server.listen(PORT)` call. Railway supplies `PORT`; Render uses `PORT` with a default of 10000. The fallback keeps local Codespaces testing on 8080:",
+    },
+
+    {
+      type: "code",
+      audience: "builder",
+      language: "javascript",
+      file: "workshop/server.js",
+      code: `const PORT = Number(process.env.PORT) || 8080;`,
+    },
 
     { type: "section", audience: "builder", title: "Option 1: Railway" },
 
@@ -83,23 +115,14 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Railway supports WebSockets out of the box, auto-deploys from GitHub, and provides free TLS.",
-    },
-
-    {
-      type: "terminal",
-      audience: "builder",
-      commands: `$ npm install -g @railway/cli
-$ railway login
-$ railway init
-$ railway up`,
+        "Railway supports WebSockets, GitHub deployments, and HTTPS. Create a service from your GitHub fork or repository. In the service Settings, set **Root Directory** to `/workshop`, **Build Command** to `npm ci`, and **Start Command** to `npm start` (the production script in `workshop/package.json`). See [Railway's monorepo guide](https://docs.railway.com/deployments/monorepo) for the root-directory setting.",
     },
 
     {
       type: "prose",
       audience: "builder",
       content:
-        "Set environment variables in the Railway dashboard under project settings. Update the Twilio webhook URL to the Railway-provided domain.",
+        "Add your credentials in the service's **Variables** tab. Under **Settings → Networking → Public Networking**, choose **Generate Domain**. Railway routes that HTTPS domain to your server's `PORT`; if the domain has a target-port setting, make sure it matches the port shown in the server log. Use the generated domain plus `/twiml` as the Twilio voice webhook URL, with method POST.",
     },
 
     { type: "page-break" },
@@ -110,14 +133,14 @@ $ railway up`,
       type: "prose",
       audience: "builder",
       content:
-        'Render provides automatic SSL, WebSocket support, and GitHub integration. Create a "Web Service" and point it to the repository.',
+        'Render provides HTTPS, WebSocket support, and GitHub integration. Create a **Web Service** from your GitHub fork or repository, then set its **Root Directory** to `workshop`. Commands run relative to that directory. See [Render\'s monorepo guide](https://render.com/docs/monorepo-support) for this setting.',
     },
 
     {
       type: "prose",
       audience: "builder",
       content:
-        'In the Render dashboard, set the build command to `npm install` and the start command to `node server.js`. Add environment variables under the "Environment" tab.',
+        "Set **Build Command** to `npm ci` and **Start Command** to `npm start`. Add credentials under **Environment** and choose a service plan that stays running during calls. Render supplies a public `https://<service>.onrender.com` domain and a `PORT` value (10000 by default). Once deployed, use that domain plus `/twiml` as the Twilio voice webhook URL, with method POST. The public URL uses HTTPS without `:8080`.",
     },
 
     { type: "section", audience: "builder", title: "Option 3: Docker on Any Cloud" },
@@ -126,21 +149,21 @@ $ railway up`,
       type: "prose",
       audience: "builder",
       content:
-        "For maximum flexibility, containerize the agent and deploy to any cloud provider:",
+        "For maximum flexibility, save this Dockerfile as `workshop/Dockerfile`. Build it from `workshop/` so the image contains the Builder agent instead of the companion app:",
     },
 
     {
       type: "code",
       audience: "builder",
       language: "dockerfile",
-      file: "Dockerfile",
+      file: "workshop/Dockerfile",
       code: `FROM node:20-slim
 
 WORKDIR /app
 
 # Copy package files first for layer caching
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Copy application code
 COPY . .
@@ -153,9 +176,26 @@ USER appuser
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s \\
-  CMD curl -f http://localhost:8080/health || exit 1
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["node", "server.js"]`,
+    },
+
+    {
+      type: "prose",
+      audience: "builder",
+      content:
+        "Keep your local credentials and installed dependencies out of the Docker image:",
+    },
+
+    {
+      type: "code",
+      audience: "builder",
+      language: "text",
+      file: "workshop/.dockerignore",
+      code: `node_modules
+.env
+.env.*`,
     },
 
     {
@@ -169,10 +209,10 @@ CMD ["node", "server.js"]`,
       type: "code",
       audience: "builder",
       language: "javascript",
-      file: "server.js",
+      file: "workshop/server.js",
       highlight: ["1-9"],
       code: `// Inside your http.createServer handler, add a health check.
-// Place this route anywhere alongside /twiml and /call; the platform's
+// Place this route anywhere alongside /twiml; the platform's
 // health checker pings it on a schedule to confirm the server is alive.
 if (req.url === "/health" && req.method === "GET") {
   res.writeHead(200, { "Content-Type": "application/json" });
@@ -182,6 +222,13 @@ if (req.url === "/health" && req.method === "GET") {
   }));
   return;
 }`,
+    },
+
+    {
+      type: "prose",
+      audience: "builder",
+      content:
+        "Build from `workshop/`, where Codespaces terminals already open. If you are in a local clone's repository root, run `cd workshop` once before these commands:",
     },
 
     {
@@ -208,7 +255,7 @@ $ docker run -p 8080:8080 --env-file .env voice-agent`,
       type: "prose",
       audience: "builder",
       content:
-        "Make sure these values are configured in the deployment platform:",
+        "Set these values in your deployment platform's environment or secrets settings. Use real credentials and E.164 phone numbers; `HANDOFF_PHONE_NUMBER` must be a reachable destination to test a live transfer. The host supplies `PORT`, and the server defaults to 8080 locally:",
     },
 
     {
@@ -221,7 +268,7 @@ TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=your_auth_token
 TWILIO_PHONE_NUMBER=+15551234567
 MY_PHONE_NUMBER=+15557654321
-PORT=8080`,
+HANDOFF_PHONE_NUMBER=+15559876543`,
     },
 
     {
@@ -238,7 +285,7 @@ PORT=8080`,
       type: "prose",
       audience: "builder",
       content:
-        "Once deployed, update the Twilio phone number to point to the production address instead of the Codespace URL. In the Twilio Console, go to Phone Numbers, select the number, and update the webhook URL.",
+        "After securing the public routes, update the Twilio phone number's voice webhook in the Twilio Console to `https://<your-public-domain>/twiml` with method POST. Use the domain Railway generated or Render assigned, rather than your Codespace URL. A call placed to that Twilio number will use the deployed `/twiml` and `/ws` endpoints.",
     },
 
     {

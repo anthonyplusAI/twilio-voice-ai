@@ -71,7 +71,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Add a `dtmf` case to the message handler. This example builds a simple menu system:",
+        "Replace your `handleMessage` with this version to add a `dtmf` case, then add `handleDtmfInput` below it. Keep the per-call `stateFor(ws)` helper from Step 1 so a keypad request enters only that caller's conversation:",
     },
 
     {
@@ -81,7 +81,14 @@ export default {
       file: "server.js",
       highlight: ["5-8", "21-48"],
       code: `function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || stateFor(ws).closed) return;
 
   switch (msg.type) {
     case "dtmf":
@@ -90,11 +97,11 @@ export default {
       break;
 
     case "prompt":
-      handlePrompt(ws, msg);
+      if (msg.last !== false && typeof msg.voicePrompt === "string") handlePrompt(ws, msg);
       break;
 
     case "interrupt":
-      handleInterrupt(msg);
+      handleInterrupt(ws, msg);
       break;
   }
 }
@@ -108,7 +115,7 @@ function handleDtmfInput(ws, digit) {
   switch (digit) {
     case "1":
       // Inject context into the LLM conversation
-      conversationHistory.push({
+      stateFor(ws).conversationHistory.push({
         role: "user",
         content: "I want to check my order status."
       });
@@ -178,18 +185,16 @@ function handleDtmfInput(ws, digit) {
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      highlight: ["1-10"],
+      highlight: ["2-6"],
       code: `// Send DTMF tones outbound (e.g., navigating another IVR)
 function sendDigits(ws, digits) {
-  ws.send(JSON.stringify({
-    type: "sendDigits",
-    digits: digits
-  }));
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: "sendDigits", digits }));
 }
 
-// Example: after transferring to another system
-sendDigits(ws, "1");  // Press 1 for English
-sendDigits(ws, "3");  // Press 3 for billing`,
+// Inside an active WebSocket handler, you could call:
+// sendDigits(ws, "1");  // Press 1 for English
+// sendDigits(ws, "3");  // Press 3 for billing`,
     },
 
     { type: "section", title: "Enabling DTMF Detection", audience: "builder" },
@@ -206,15 +211,20 @@ sendDigits(ws, "3");  // Press 3 for billing`,
       audience: "builder",
       language: "xml",
       file: "twiml-response",
-      code: `<!-- Keep welcomeGreeting from Chapter 2 and voice/language from Chapter 3;
-     dtmfDetection, interruptible, and reportInputDuringAgentSpeech are
-     the only new attributes in this step.
+      code: `<!-- Keep welcomeGreeting and the Chapter 3 voice/STT settings.
+     dtmfDetection is the only new attribute in this step.
      The url is filled in dynamically by your /twiml handler using
      req.headers.host — you don't hardcode the hostname. -->
 <Response>
   <Connect>
     <ConversationRelay
       url="wss://<your-server-host>/ws"
+      voice="21m00Tcm4TlvDq8ikWAM"
+      ttsProvider="ElevenLabs"
+      language="en-US"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
+      welcomeGreeting="Hello! How can I help you today?"
       dtmfDetection="true"
       interruptible="any"
       reportInputDuringAgentSpeech="any"
@@ -235,7 +245,7 @@ sendDigits(ws, "3");  // Press 3 for billing`,
       audience: "builder",
       title: "Collecting multi-digit input",
       content:
-        "If you need to collect a multi-digit input like an account number or PIN, you will need to buffer the digits yourself. Each keypress arrives as a separate `dtmf` message. Use a timer to detect when the caller has finished entering digits:\n\n```javascript\nlet dtmfBuffer = \"\";\nlet dtmfTimeout = null;\n\nfunction handleDtmfInput(ws, digit) {\n  dtmfBuffer += digit;\n  clearTimeout(dtmfTimeout);\n\n  // If # is pressed, process immediately\n  if (digit === \"#\") {\n    processCollectedDigits(ws, dtmfBuffer.slice(0, -1));\n    dtmfBuffer = \"\";\n    return;\n  }\n\n  // Otherwise wait 2 seconds for more digits\n  dtmfTimeout = setTimeout(() => {\n    processCollectedDigits(ws, dtmfBuffer);\n    dtmfBuffer = \"\";\n  }, 2000);\n}\n```",
+        "If you need to collect a multi-digit input like an account number or PIN, buffer digits separately for each call. Each keypress arrives as a separate `dtmf` message. Use a timer to detect when that caller has finished entering digits. This replaces the single-digit menu handler above when you add multi-digit collection:\n\n```javascript\nconst digitStates = new WeakMap();\n\nfunction handleDtmfInput(ws, digit) {\n  let state = digitStates.get(ws);\n  if (!state) {\n    state = { buffer: \"\", timeout: null };\n    digitStates.set(ws, state);\n  }\n  clearTimeout(state.timeout);\n\n  if (digit === \"#\") {\n    processCollectedDigits(ws, state.buffer);\n    state.buffer = \"\";\n    return;\n  }\n\n  state.buffer += digit;\n  state.timeout = setTimeout(() => {\n    processCollectedDigits(ws, state.buffer);\n    state.buffer = \"\";\n  }, 2000);\n}\n```\n\nClear `digitStates.get(ws)?.timeout` in the WebSocket close handler if you add this example.",
     },
 
     {
@@ -244,7 +254,7 @@ sendDigits(ws, "3");  // Press 3 for billing`,
       file: "server.js",
       language: "javascript",
       explanation:
-        "Builds on the previous step by adding handleDtmfInput with a menu system, a sendDigits helper for outbound tones, and routing the dtmf message type to handleDtmfInput. DTMF is an always-available shortcut -- the welcomeGreeting already greeted the caller, so we do not auto-play a spoken menu on setup.",
+        "Builds on the previous step by adding handleDtmfInput with a menu system, a sendDigits helper for outbound tones, and routing the dtmf message type to handleDtmfInput. DTMF is an always-available shortcut -- the welcomeGreeting already greeted the caller, so we do not auto-play a spoken menu on setup. If you replace your whole server.js with this example, preserve any Chapter 3 persona, voice, greeting, language, and transcription values you chose.",
       code: `require("dotenv").config();
 const { WebSocketServer } = require("ws");
 const http = require("http");
@@ -268,31 +278,43 @@ Speak naturally and conversationally.
 Never use markdown, bullet points, or numbered lists.
 If you don't know something, say so honestly.\`;
 
-// Module-scope state (single-caller workshop server)
-const conversationHistory = [
-  { role: "system", content: SYSTEM_PROMPT },
-];
-let activeStream = null;
+const callStates = new WeakMap();
+
+function stateFor(ws) {
+  let state = callStates.get(ws);
+  if (!state) {
+    state = {
+      conversationHistory: [{ role: "system", content: SYSTEM_PROMPT }],
+      activeStream: null,
+      closed: false,
+    };
+    callStates.set(ws, state);
+  }
+  return state;
+}
 
 function sendText(ws, token, last = false) {
+  if (ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: "text", token, last }));
 }
 
 async function streamResponse(ws) {
-  activeStream = new AbortController();
-
-  const stream = await openai.chat.completions.create(
-    {
-      model: "gpt-5.4-nano",
-      messages: conversationHistory,
-      stream: true,
-    },
-    { signal: activeStream.signal }
-  );
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  const controller = new AbortController();
+  state.activeStream = controller;
 
   try {
+    const stream = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
+      messages: state.conversationHistory,
+      stream: true,
+    }, { signal: controller.signal });
+
+    if (controller.signal.aborted || state.closed) return;
     let assistantText = "";
     for await (const chunk of stream) {
+      if (controller.signal.aborted || state.closed) return;
       const token = chunk.choices[0]?.delta?.content ?? "";
       if (token) {
         assistantText += token;
@@ -300,37 +322,44 @@ async function streamResponse(ws) {
       }
     }
     sendText(ws, "", true);
-    conversationHistory.push({ role: "assistant", content: assistantText });
+    state.conversationHistory.push({ role: "assistant", content: assistantText });
   } catch (err) {
-    if (err.name !== "AbortError") throw err;
+    if (controller.signal.aborted || err.name === "AbortError" || state.closed) return;
+    console.error("LLM error:", err.message);
+    const apology = "I'm sorry, I'm having a technical issue. Could you say that again?";
+    sendText(ws, apology, true);
+    state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    activeStream = null;
+    if (state.activeStream === controller) state.activeStream = null;
   }
 }
 
 function handlePrompt(ws, msg) {
-  conversationHistory.push({ role: "user", content: msg.voicePrompt });
+  stateFor(ws).conversationHistory.push({ role: "user", content: msg.voicePrompt });
   streamResponse(ws);
 }
 
-function handleInterrupt(msg) {
+function handleInterrupt(ws, msg) {
   console.log("Caller interrupted. Heard:", msg.utteranceUntilInterrupt);
 
-  if (activeStream) {
-    activeStream.abort();
-    activeStream = null;
-  }
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  state.activeStream = null;
 
-  const lastMsg = conversationHistory[conversationHistory.length - 1];
+  const lastMsg = state.conversationHistory[state.conversationHistory.length - 1];
   if (lastMsg?.role === "assistant") {
     lastMsg.content = msg.utteranceUntilInterrupt;
+  } else if (msg.utteranceUntilInterrupt) {
+    state.conversationHistory.push({
+      role: "assistant", content: msg.utteranceUntilInterrupt
+    });
   }
 }
 
 function handleDtmfInput(ws, digit) {
   switch (digit) {
     case "1":
-      conversationHistory.push({
+      stateFor(ws).conversationHistory.push({
         role: "user",
         content: "I want to check my order status.",
       });
@@ -340,6 +369,7 @@ function handleDtmfInput(ws, digit) {
     case "2":
       sendText(ws, "Let me transfer you to a representative. " +
         "Please hold for a moment.", true);
+      // Chapter 5 adds the actual transfer handoff.
       break;
 
     case "0":
@@ -355,8 +385,21 @@ function handleDtmfInput(ws, digit) {
   }
 }
 
+// Send DTMF tones outbound when another IVR needs them.
+function sendDigits(ws, digits) {
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: "sendDigits", digits }));
+}
+
 function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || stateFor(ws).closed) return;
 
   switch (msg.type) {
     case "setup":
@@ -364,11 +407,11 @@ function handleMessage(ws, data) {
       break;
 
     case "prompt":
-      handlePrompt(ws, msg);
+      if (msg.last !== false && typeof msg.voicePrompt === "string") handlePrompt(ws, msg);
       break;
 
     case "interrupt":
-      handleInterrupt(msg);
+      handleInterrupt(ws, msg);
       break;
 
     case "dtmf":
@@ -388,6 +431,11 @@ const server = http.createServer(async (req, res) => {
   <Connect>
     <ConversationRelay
       url="wss://\${req.headers.host}/ws"
+      voice="21m00Tcm4TlvDq8ikWAM"
+      ttsProvider="ElevenLabs"
+      language="en-US"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
       welcomeGreeting="Hello! How can I help you today?"
       dtmfDetection="true"
       interruptible="any"
@@ -433,6 +481,9 @@ wss.on("connection", (ws) => {
   ws.on("message", (data) => handleMessage(ws, data));
 
   ws.on("close", () => {
+    const state = stateFor(ws);
+    state.closed = true;
+    state.activeStream?.abort();
     console.log("Call ended");
   });
 

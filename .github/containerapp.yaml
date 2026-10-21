@@ -27,6 +27,12 @@ properties:
             secretRef: twilio-auth-token
           - name: TWILIO_PHONE_NUMBER
             secretRef: twilio-phone-number
+          - name: PUBLIC_BASE_URL
+            secretRef: public-base-url
+          - name: CALL_LIMIT_AZURE_TABLE_CONNECTION_STRING
+            secretRef: call-limit-storage
+          - name: ADMIN_PASSWORD
+            secretRef: admin-password
           - name: OPENAI_API_KEY
             secretRef: openai-api-key
           - name: HANDOFF_PHONE_NUMBER

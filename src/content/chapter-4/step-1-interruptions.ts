@@ -83,7 +83,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "When the caller interrupts, the server needs to stop the AI from continuing its reply and update the conversation history so the AI knows what the caller actually heard. To make that possible, `conversationHistory` and `streamResponse` need to move to module scope.",
+        "When the caller interrupts, the server needs to stop that call's AI reply and record only what the caller heard. The handler functions can live at module scope, but each WebSocket needs its own conversation history and AbortController. `stateFor(ws)` below keeps that state separate for each call.",
     },
 
     {
@@ -91,7 +91,7 @@ export default {
       audience: "builder",
       variant: "warning",
       content:
-        "**Heads up -- this step is a refactor, not an add.** Before you paste the code below, do these five things:\n\n- **Delete** `let callSid = null;` and `const conversationHistory = [...]` from inside `wss.on(\"connection\", ...)`.\n- **Delete** the entire `streamLLMResponse` function you wrote earlier.\n- **Delete** the entire `ws.on(\"message\", (data) => { switch (...) { ... } })` block inside `wss.on(\"connection\", ...)`. It is getting replaced with a one-liner that dispatches to the new module-scope `handleMessage`.\n- **Keep** the `sendText(ws, token, last = false)` helper you already have -- the new code uses it as-is (double-check the signature matches if you modified it).\n- **Paste** the new module-scope code at the **top of `server.js`**, outside any handler. Then, inside `wss.on(\"connection\", ...)`, add `ws.on(\"message\", (data) => handleMessage(ws, data));` to wire the new dispatcher up.\n\nIf you paste additively without removing the old declarations, the per-connection variable shadows the module-scope one and the interrupt handler -- plus the tool loop coming later -- will write to the wrong array.",
+        "**This step replaces the old streaming and message handlers.** Delete the per-connection `callSid` and `conversationHistory`, the old `streamLLMResponse`, and the old `ws.on(\"message\", ...)` switch. Keep `sendText(ws, token, last = false)`. Put the helper code below **after your existing `SYSTEM_PROMPT` declaration** and before `http.createServer`; `stateFor(ws)` will create a fresh history when each call arrives. Then replace your existing `wss.on(\"connection\", ...)` callback with the second snippet below; its old close handler still references the deleted `callSid`. Keep your existing voice and transcription attributes in `/twiml` when adding the interruption attributes.",
     },
 
     {
@@ -99,88 +99,127 @@ export default {
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      highlight: ["1-8", "11-12", "16-32", "34-37", "39-53", "55-70"],
-      code: `// Module-scope state for the current call. For a single-caller workshop
-// server this is fine; in production, key these off callSid.
-const conversationHistory = [
-  { role: "system", content: SYSTEM_PROMPT }, // from Chapter 3
-];
+      highlight: ["1-15", "17-50", "52-76"],
+      code: `const callStates = new WeakMap();
 
-// The AbortController for the in-flight OpenAI stream, or null when idle
-let activeStream = null;
+function stateFor(ws) {
+  let state = callStates.get(ws);
+  if (!state) {
+    state = {
+      conversationHistory: [{ role: "system", content: SYSTEM_PROMPT }],
+      activeStream: null,
+      closed: false,
+    };
+    callStates.set(ws, state);
+  }
+  return state;
+}
 
-// Streams an assistant turn using whatever is currently in conversationHistory.
-// Split out so DTMF (Step 2) and tool calls (Chapter 5) can invoke it after
-// they push their own synthetic user turns.
+// DTMF and tool calls can also invoke this after adding a user turn.
 async function streamResponse(ws) {
-  activeStream = new AbortController();
-
-  const stream = await openai.chat.completions.create(
-    {
-      model: "gpt-5.4-nano",
-      messages: conversationHistory,
-      stream: true,
-    },
-    { signal: activeStream.signal } // <- cancellation hook
-  );
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  const controller = new AbortController();
+  state.activeStream = controller;
 
   try {
+    const stream = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
+      messages: state.conversationHistory,
+      stream: true,
+    }, { signal: controller.signal });
+
+    if (controller.signal.aborted || state.closed) return;
     let assistantText = "";
     for await (const chunk of stream) {
+      if (controller.signal.aborted || state.closed) return;
       const token = chunk.choices[0]?.delta?.content ?? "";
       if (token) {
         assistantText += token;
-        // Stream each token with last=false; signal end after the loop
         sendText(ws, token);
       }
     }
     sendText(ws, "", true);
-    conversationHistory.push({ role: "assistant", content: assistantText });
+    state.conversationHistory.push({ role: "assistant", content: assistantText });
   } catch (err) {
-    if (err.name !== "AbortError") throw err;
-    // Stream was aborted by an interrupt -- history is trimmed in handleInterrupt
+    if (controller.signal.aborted || err.name === "AbortError" || state.closed) return;
+    console.error("LLM error:", err.message);
+    const apology = "I'm sorry, I'm having a technical issue. Could you say that again?";
+    sendText(ws, apology, true);
+    state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    activeStream = null;
+    if (state.activeStream === controller) state.activeStream = null;
   }
 }
 
 function handlePrompt(ws, msg) {
-  conversationHistory.push({ role: "user", content: msg.voicePrompt });
+  stateFor(ws).conversationHistory.push({ role: "user", content: msg.voicePrompt });
   streamResponse(ws);
 }
 
-function handleInterrupt(msg) {
+function handleInterrupt(ws, msg) {
   console.log("Caller interrupted. Heard:", msg.utteranceUntilInterrupt);
-
-  // 1. Abort the active OpenAI stream (if one is running)
-  if (activeStream) {
-    activeStream.abort();
-    activeStream = null;
-  }
-
-  // 2. Replace the last assistant turn with only what the caller heard
-  const lastMsg = conversationHistory[conversationHistory.length - 1];
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  state.activeStream = null;
+  const lastMsg = state.conversationHistory[state.conversationHistory.length - 1];
   if (lastMsg?.role === "assistant") {
     lastMsg.content = msg.utteranceUntilInterrupt;
+  } else if (msg.utteranceUntilInterrupt) {
+    state.conversationHistory.push({
+      role: "assistant", content: msg.utteranceUntilInterrupt
+    });
   }
 }
 
 function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || stateFor(ws).closed) return;
 
   switch (msg.type) {
     case "interrupt":
-      handleInterrupt(msg);
+      handleInterrupt(ws, msg);
       break;
 
     case "prompt":
-      // The caller's new speech arrives here
-      handlePrompt(ws, msg);
+      if (msg.last !== false && typeof msg.voicePrompt === "string") handlePrompt(ws, msg);
       break;
 
     // ... other message types
   }
 }`,
+    },
+
+    {
+      type: "code",
+      audience: "builder",
+      language: "javascript",
+      file: "server.js",
+      highlight: ["3-9"],
+      code: `wss.on("connection", (ws) => {
+  console.log("New WebSocket connection");
+  ws.on("message", (data) => handleMessage(ws, data));
+  ws.on("close", () => {
+    const state = stateFor(ws);
+    state.closed = true;
+    state.activeStream?.abort();
+    console.log("Call ended");
+  });
+  ws.on("error", (err) => console.error("WebSocket error:", err));
+});`,
+    },
+
+    {
+      type: "prose",
+      audience: "builder",
+      content:
+        "The `prompt` branch keeps the Chapter 3 final-transcript check: Conversation Relay can send interim `prompt` messages with `last: false`, and only the final transcript should start an LLM reply.",
     },
 
     { type: "page-break" },
@@ -191,7 +230,7 @@ function handleMessage(ws, data) {
       type: "prose",
       audience: "builder",
       content:
-        "Interruption behavior is controlled through attributes on the Conversation Relay TwiML element, set when the call first connects:",
+        "Interruption behavior is controlled through attributes on the Conversation Relay TwiML element. Add the two interruption attributes to your existing `/twiml` response, keeping the voice and transcription choices you made in Chapter 3:",
     },
 
     {
@@ -199,11 +238,17 @@ function handleMessage(ws, data) {
       audience: "builder",
       language: "xml",
       file: "twiml-response",
-      highlight: [5],
+      highlight: [11, 12],
       code: `<Response>
   <Connect>
     <ConversationRelay
       url="wss://<your-server-host>/ws"
+      voice="21m00Tcm4TlvDq8ikWAM"
+      ttsProvider="ElevenLabs"
+      language="en-US"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
+      welcomeGreeting="Hello! How can I help you today?"
       interruptible="any"
       reportInputDuringAgentSpeech="any"
     />
@@ -231,7 +276,7 @@ function handleMessage(ws, data) {
       audience: "builder",
       variant: "info",
       content:
-        "**Keep your persona.** The solution below uses a generic `SYSTEM_PROMPT` (\"helpful voice assistant for Twilio-Mart\") as the default. If you picked a specific persona when you built the agent's identity (Sam, Ms. Chen, or Jake), paste *your* `SYSTEM_PROMPT` here instead -- the rest of the code does not change.",
+        "**Keep your Chapter 3 choices.** The complete solution below shows the example `SYSTEM_PROMPT`, voice, greeting, language, and transcription settings. If you customized any of these, carry your own values into the solution when replacing `server.js`. The new interruption logic does not require you to reset your agent's identity.",
     },
 
     {
@@ -240,7 +285,7 @@ function handleMessage(ws, data) {
       file: "server.js",
       language: "javascript",
       explanation:
-        "The complete server after this refactor: conversationHistory and activeStream move to module scope, streamResponse replaces streamLLMResponse with AbortController support, and handlePrompt/handleInterrupt/handleMessage are introduced.",
+        "The complete server after this refactor: each WebSocket gets its own conversation history and AbortController through `stateFor(ws)`. `streamResponse` replaces `streamLLMResponse`, catches OpenAI errors, and works with the new prompt and interrupt handlers. The `/twiml` values shown are Chapter 3 examples; preserve your own voice, greeting, language, and transcription values if you changed them.",
       code: `require("dotenv").config();
 const { WebSocketServer } = require("ws");
 const http = require("http");
@@ -264,31 +309,43 @@ Speak naturally and conversationally.
 Never use markdown, bullet points, or numbered lists.
 If you don't know something, say so honestly.\`;
 
-// Module-scope state (single-caller workshop server)
-const conversationHistory = [
-  { role: "system", content: SYSTEM_PROMPT },
-];
-let activeStream = null;
+const callStates = new WeakMap();
+
+function stateFor(ws) {
+  let state = callStates.get(ws);
+  if (!state) {
+    state = {
+      conversationHistory: [{ role: "system", content: SYSTEM_PROMPT }],
+      activeStream: null,
+      closed: false,
+    };
+    callStates.set(ws, state);
+  }
+  return state;
+}
 
 function sendText(ws, token, last = false) {
+  if (ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: "text", token, last }));
 }
 
 async function streamResponse(ws) {
-  activeStream = new AbortController();
-
-  const stream = await openai.chat.completions.create(
-    {
-      model: "gpt-5.4-nano",
-      messages: conversationHistory,
-      stream: true,
-    },
-    { signal: activeStream.signal }
-  );
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  const controller = new AbortController();
+  state.activeStream = controller;
 
   try {
+    const stream = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
+      messages: state.conversationHistory,
+      stream: true,
+    }, { signal: controller.signal });
+
+    if (controller.signal.aborted || state.closed) return;
     let assistantText = "";
     for await (const chunk of stream) {
+      if (controller.signal.aborted || state.closed) return;
       const token = chunk.choices[0]?.delta?.content ?? "";
       if (token) {
         assistantText += token;
@@ -296,35 +353,49 @@ async function streamResponse(ws) {
       }
     }
     sendText(ws, "", true);
-    conversationHistory.push({ role: "assistant", content: assistantText });
+    state.conversationHistory.push({ role: "assistant", content: assistantText });
   } catch (err) {
-    if (err.name !== "AbortError") throw err;
+    if (controller.signal.aborted || err.name === "AbortError" || state.closed) return;
+    console.error("LLM error:", err.message);
+    const apology = "I'm sorry, I'm having a technical issue. Could you say that again?";
+    sendText(ws, apology, true);
+    state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    activeStream = null;
+    if (state.activeStream === controller) state.activeStream = null;
   }
 }
 
 function handlePrompt(ws, msg) {
-  conversationHistory.push({ role: "user", content: msg.voicePrompt });
+  stateFor(ws).conversationHistory.push({ role: "user", content: msg.voicePrompt });
   streamResponse(ws);
 }
 
-function handleInterrupt(msg) {
+function handleInterrupt(ws, msg) {
   console.log("Caller interrupted. Heard:", msg.utteranceUntilInterrupt);
 
-  if (activeStream) {
-    activeStream.abort();
-    activeStream = null;
-  }
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  state.activeStream = null;
 
-  const lastMsg = conversationHistory[conversationHistory.length - 1];
+  const lastMsg = state.conversationHistory[state.conversationHistory.length - 1];
   if (lastMsg?.role === "assistant") {
     lastMsg.content = msg.utteranceUntilInterrupt;
+  } else if (msg.utteranceUntilInterrupt) {
+    state.conversationHistory.push({
+      role: "assistant", content: msg.utteranceUntilInterrupt
+    });
   }
 }
 
 function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || stateFor(ws).closed) return;
 
   switch (msg.type) {
     case "setup":
@@ -332,11 +403,11 @@ function handleMessage(ws, data) {
       break;
 
     case "prompt":
-      handlePrompt(ws, msg);
+      if (msg.last !== false && typeof msg.voicePrompt === "string") handlePrompt(ws, msg);
       break;
 
     case "interrupt":
-      handleInterrupt(msg);
+      handleInterrupt(ws, msg);
       break;
 
     default:
@@ -351,6 +422,11 @@ const server = http.createServer(async (req, res) => {
   <Connect>
     <ConversationRelay
       url="wss://\${req.headers.host}/ws"
+      voice="21m00Tcm4TlvDq8ikWAM"
+      ttsProvider="ElevenLabs"
+      language="en-US"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
       welcomeGreeting="Hello! How can I help you today?"
       interruptible="any"
       reportInputDuringAgentSpeech="any"
@@ -395,6 +471,9 @@ wss.on("connection", (ws) => {
   ws.on("message", (data) => handleMessage(ws, data));
 
   ws.on("close", () => {
+    const state = stateFor(ws);
+    state.closed = true;
+    state.activeStream?.abort();
     console.log("Call ended");
   });
 

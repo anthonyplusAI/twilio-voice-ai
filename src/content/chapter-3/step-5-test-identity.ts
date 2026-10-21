@@ -18,10 +18,10 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "You have crafted a system prompt, designed a persona, selected a voice, and configured the language settings. Stop the running server with **Ctrl+C**, then start it again to pick up the changes:",
+        "You have crafted a system prompt, designed a persona, selected a voice, and configured the language settings. `npm run dev` restarts after you save `server.js` or an imported JavaScript file. If the server is not running, start it now. If you changed `.env`, stop it with Ctrl+C and start it again:",
     },
 
-    { type: "terminal", audience: "builder", commands: "$ node server.js" },
+    { type: "terminal", audience: "builder", commands: "$ npm run dev" },
 
     {
       type: "prose",
@@ -57,13 +57,13 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Or trigger your own `/call` endpoint from the terminal. Since the server is listening on port 8080 inside the Codespace, you can hit it on `localhost`:",
+        "Or make a call with your own upgraded Twilio account. Open a second Codespace terminal and run the local command, which uses your current public `/twiml` URL; the public tunnel blocks direct `/call` requests:",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ curl -X POST http://localhost:8080/call`,
+      commands: `$ npm run call`,
     },
 
     { type: "page-break" },
@@ -96,7 +96,7 @@ export default {
       question:
         "Does your agent respond with the right personality and voice?",
       troubleshooting: [
-        "Phone never rings? Check that your server is running (`node server.js`) and `tunnel-url` returns a `trycloudflare.com` URL",
+        "Phone never rings? Check that your server is running (`npm run dev`) and `tunnel-url` returns a `trycloudflare.com` URL",
         "Voice sounds wrong? Revisit the voice picker — your choice takes effect on the next call, not the current one",
         "Agent using a different name or tone? Your system prompt probably needs stronger wording about the persona",
         "Agent breaks character on off-topic questions? Add explicit boundaries to the system prompt about what it should refuse",

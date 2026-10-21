@@ -20,14 +20,14 @@ export default {
             type: "prose",
             audience: "builder",
             content:
-                "Twilio needs a public URL to reach your server. Your Codespace boots a Cloudflare tunnel automatically -- it forwards a free `https://*.trycloudflare.com` URL to port 8080 inside your Codespace. No signup, no port-visibility settings to fiddle with.",
+                "Twilio needs a public URL to reach your server. Your Codespace boots a Cloudflare tunnel automatically. It sends a free `https://*.trycloudflare.com` URL to a protected local proxy on port 8081, which forwards the workshop's TwiML and voice WebSocket traffic to your server on port 8080. No signup or port-visibility settings are needed.",
         },
 
         {
             type: "prose",
             audience: "builder",
             content:
-                "The tunnel URL was printed in your terminal when the Codespace started. Run this any time to print it again:",
+                "The tunnel URL usually appears in your terminal when the Codespace starts. Run this any time to get the current URL; the helper waits for a slow tunnel or starts it again if it stopped:",
         },
 
         {
@@ -42,7 +42,7 @@ https://random-words-abc123.trycloudflare.com/twiml`,
             audience: "builder",
             variant: "tip",
             content:
-                "**Save this URL** -- you'll paste it into the Call Me widget in the next chapter. The URL stays the same as long as the Codespace is running. If you restart the Codespace, you'll get a new one (just run `tunnel-url` again).",
+                "**Save this URL** -- you'll paste it into the Call Me widget in the next chapter. Quick Tunnel URLs can change when the tunnel or Codespace restarts. Run `tunnel-url` again before a call and paste the new URL if it changed. Keep Codespaces port 8080 private in the Ports tab; making it public bypasses the protected tunnel.",
         },
 
         {
@@ -50,7 +50,7 @@ https://random-words-abc123.trycloudflare.com/twiml`,
             audience: "builder",
             title: "Why a tunnel and not the Codespace's own URL?",
             content:
-                "GitHub Codespaces does forward port 8080 to a `https://<codespace>-8080.app.github.dev` URL, but GitHub serves an HTML \"You are about to access a development port\" warning page on the first request -- meant to protect humans from phishing links. Twilio is a server, not a human; it can't click \"Continue,\" so the warning blocks every webhook. Cloudflare Tunnel skips that interstitial entirely: it forwards `https://*.trycloudflare.com` straight to `localhost:8080` inside your Codespace, and the response Twilio gets is your TwiML XML, not GitHub's warning page.",
+                "GitHub Codespaces does forward port 8080 to a `https://<codespace>-8080.app.github.dev` URL, but GitHub serves an HTML \"You are about to access a development port\" warning page on the first request -- meant to protect humans from phishing links. Twilio is a server, not a human; it can't click \"Continue,\" so the warning blocks every webhook. Cloudflare Tunnel skips that interstitial: it forwards `https://*.trycloudflare.com` to the protected proxy on `localhost:8081`, which passes the allowed request to your server on port 8080. The response Twilio gets is your TwiML XML, not GitHub's warning page. Public requests to `/call` are blocked at the proxy.",
         },
 
         {
@@ -58,7 +58,7 @@ https://random-words-abc123.trycloudflare.com/twiml`,
             audience: "builder",
             title: "Fallback: Local Dev + ngrok",
             content:
-                "If Codespaces is unavailable or you prefer local development, you can run everything on your machine instead. Install Node.js 18+, clone the [repository](https://github.com/anthonyjdella/twilio-voice-ai), run `npm install`, and use **ngrok** to expose your local server:\n\n```\nnpm install -g ngrok\nngrok http 8080\n```\n\nngrok creates a public URL that tunnels to your localhost. Use the `https://` URL from ngrok as your public server address. Note: ngrok free tier requires an account/authtoken and the URL changes every time you restart.",
+                "If Codespaces is unavailable or you prefer local development, install Node.js 20+, clone the [repository](https://github.com/anthonyplusAI/twilio-voice-ai), and run `npm ci` from the `workshop/` folder. Create `workshop/.env` with the credentials and phone numbers shown in the previous step. When you create `server.js` in Chapter 2, run `npm run dev` from `workshop/`. In a second terminal at the repository root, run `node workshop/secure-proxy.js`; in a third, run `ngrok http 8081`. Add `TWIML_URL=https://<your-ngrok-domain>/twiml` to `workshop/.env` using ngrok's actual HTTPS domain. Paste that same URL into the Call Me widget. For an own-account call, run `npm run call` from `workshop/`. The ngrok free tier requires an account/authtoken, and its URL can change when it restarts; update `TWIML_URL` when it does. Do not point ngrok directly at port 8080 because that bypasses the proxy's public `/call` block and WebSocket signature check.",
         },
 
         { type: "page-break" },
@@ -69,7 +69,7 @@ https://random-words-abc123.trycloudflare.com/twiml`,
             type: "prose",
             audience: "builder",
             content:
-                "Before diving into code in the next chapter, let's run through a final checklist to make sure everything is in place. Each of these items is essential -- if any one is missing, your first call will not work.",
+                "Before diving into code in the next chapter, check the pieces needed for the workshop site's Call Me button. The optional `npm run call` command needs your own Twilio credentials and phone number, noted below.",
         },
 
         { type: "section", title: "Pre-Flight Checklist", audience: "builder" },
@@ -85,21 +85,21 @@ https://random-words-abc123.trycloudflare.com/twiml`,
             type: "prose",
             audience: "builder",
             content:
-                "**2. Credentials are loaded** -- Your `workshop/.env` file has the shared API keys (pre-configured in the Codespace environment).",
+                "**2. OpenAI key is loaded** -- You added a working `OPENAI_API_KEY` to `workshop/.env`. The workshop site supplies the upgraded Twilio account for Call Me. Add upgraded Twilio credentials to your Codespace only if you will use `npm run call`.",
         },
 
         {
             type: "prose",
             audience: "builder",
             content:
-                "**3. `MY_PHONE_NUMBER` is set** -- You updated this in `workshop/.env` with your real phone number.",
+                "**3. Phone is ready** -- Keep a phone nearby to receive Call Me. Set `MY_PHONE_NUMBER` in `workshop/.env` only if you will also use `npm run call`.",
         },
 
         {
             type: "prose",
             audience: "builder",
             content:
-                "**4. Tunnel is running** -- Run `tunnel-url` in the terminal. You should get back a `https://*.trycloudflare.com/twiml` URL. If it says \"Tunnel not running,\" run `bash .devcontainer/start-tunnel.sh` from the repo root.",
+                "**4. Tunnel is running** -- Run `tunnel-url` in the terminal. You should get back a `https://*.trycloudflare.com/twiml` URL. The helper restarts a stopped tunnel; if it still fails, check `/tmp/cloudflared.log` and run `bash ../.devcontainer/start-tunnel.sh` from `workshop/`.",
         },
 
         {
@@ -107,7 +107,7 @@ https://random-words-abc123.trycloudflare.com/twiml`,
             audience: "builder",
             variant: "tip",
             content:
-                "If you are using a Twilio trial account with your own credentials (not the shared workshop account), you can only make calls to verified phone numbers. Go to [Phone Numbers → Verified Caller IDs](https://console.twilio.com/us1/develop/phone-numbers/manage/verified) to add your personal phone number.",
+                "The workshop site's Call Me button uses the site's Twilio account, even when it calls your Codespace code. `npm run call` uses the Twilio credentials in `workshop/.env`. The Codespace's `/call` route is local; the public tunnel blocks it so strangers cannot charge your account. Whichever account places the call must be upgraded to use ConversationRelay; [Twilio trials block it](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), even when the recipient number is verified. Ask the facilitator if the site's account has been upgraded before the first call.",
         },
 
         { type: "section", title: "Ready to Build", audience: "builder" },
@@ -123,12 +123,12 @@ https://random-words-abc123.trycloudflare.com/twiml`,
             type: "verify",
             audience: "builder",
             question:
-                "Is your Codespace running with credentials loaded, a tunnel URL ready, and a phone nearby to receive calls?",
+                "Is your Codespace running with an OpenAI key, a tunnel URL, and a phone nearby to receive calls?",
             troubleshooting: [
                 "Codespace not loading? Try refreshing the browser tab or reopening from github.com/codespaces",
-                "Credentials missing? Check that workshop/.env has real values, not placeholders like ACxxxxxxxx",
-                "MY_PHONE_NUMBER not set? Open workshop/.env and update it to your real number (e.g., +12065551234)",
-                "`tunnel-url` says \"Tunnel not running\"? Run `bash .devcontainer/start-tunnel.sh` from the repo root, wait a few seconds, then try `tunnel-url` again",
+                "OpenAI key missing? Get a working key from the facilitator or your own account and put it in workshop/.env",
+                "Using `npm run call`? Add upgraded Twilio credentials and set MY_PHONE_NUMBER to your real E.164 number (e.g., +12065551234)",
+                "`tunnel-url` failed? Check /tmp/cloudflared.log, run `bash ../.devcontainer/start-tunnel.sh` from workshop/, then try `tunnel-url` again",
             ],
         },
     ],

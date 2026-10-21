@@ -32,10 +32,40 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Before moving on, take your agent through a few representative calls. The sample prompts below match the tools and handoff setting you picked earlier -- anything you turned off in Chapter 5 will not show up here.",
+        "Save your latest `workshop/server.js` edits and leave `npm run dev` running in the Codespace. It restarts the server after each save. Run `tunnel-url` to get your public `/twiml` URL, then paste it below. This final call uses your Codespace code, including changes you just made.",
     },
 
-    { type: "demo-script", audience: "builder" },
+    {
+      type: "prose",
+      audience: "explorer",
+      content:
+        "Make one final call to hear the agent with the choices you made during the workshop.",
+    },
+
+    { type: "call-me" },
+
+    {
+      type: "callout",
+      audience: "explorer",
+      variant: "tip",
+      content:
+        "The workshop site needs an upgraded Twilio account for this ConversationRelay call. If the call connects but the agent does not start, ask the facilitator to check the account and call logs; verifying a number on a trial account does not enable ConversationRelay.",
+    },
+
+    {
+      type: "prose",
+      audience: "builder",
+      content:
+        "The site's Call Me button places the call from the site's upgraded Twilio account. You can also start a call from your Codespace's own upgraded Twilio account after setting `MY_PHONE_NUMBER` and the Twilio values in `workshop/.env`. Open a second Codespace terminal for the command below. [Trial accounts block ConversationRelay](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), even for a verified recipient. Either path uses the latest `server.js` code you just saved:",
+    },
+
+    {
+      type: "terminal",
+      audience: "builder",
+      commands: `$ npm run call`,
+    },
+
+    { type: "demo-script" },
 
     { type: "page-break" },
 

@@ -7,6 +7,7 @@ import {
   type VoiceEntry,
   type VoiceProvider,
 } from "@/lib/voice-catalog";
+import { resolveExplorerGreeting } from "@/lib/explorer-greeting";
 
 function languageSummary(voice: VoiceEntry): string {
   if (
@@ -18,6 +19,10 @@ function languageSummary(voice: VoiceEntry): string {
   // Multilingual voices support the full workshop language set — short-hand
   // that by counting rather than listing every label.
   return `${voice.languages.length} languages`;
+}
+
+function providerLabel(provider: string): string {
+  return provider === "Amazon" ? "Amazon Polly" : provider;
 }
 
 /**
@@ -47,7 +52,8 @@ export function VoicePicker() {
   const { progress, updateWorkshopState } = useProgressContext();
 
   const currentVoice = progress.workshopState.voice || "";
-  const currentProvider = progress.workshopState.ttsProvider || "ElevenLabs";
+  const savedProvider = progress.workshopState.ttsProvider || "ElevenLabs";
+  const currentProvider = savedProvider === "Amazon Polly" ? "Amazon" : savedProvider;
   const currentLanguage = progress.workshopState.language || "en-US";
 
   function selectVoice(voice: VoiceEntry) {
@@ -61,7 +67,13 @@ export function VoicePicker() {
       voiceLabel: voice.name,
     };
     if (!voice.languages.includes(currentLanguage)) {
-      nextState.language = voice.languages[0];
+      const nextLanguage = voice.languages[0];
+      nextState.language = nextLanguage;
+      const savedGreeting = progress.workshopState.welcomeGreeting;
+      if (savedGreeting) {
+        const localized = resolveExplorerGreeting(savedGreeting, nextLanguage);
+        if (localized !== savedGreeting) nextState.welcomeGreeting = localized;
+      }
     }
     updateWorkshopState(nextState);
   }
@@ -102,7 +114,7 @@ export function VoicePicker() {
         {groups.map((group) => (
           <div key={group.provider}>
             <div className="text-xs font-mono text-text-muted uppercase tracking-wider mb-2">
-              {group.provider}
+              {providerLabel(group.provider)}
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {group.voices.map((voice) => {
@@ -148,7 +160,7 @@ export function VoicePicker() {
       {currentVoice && (
         <div className="mt-4 px-3 py-2 rounded-lg bg-twilio-red/5 border border-twilio-red/20">
           <span className="text-xs text-twilio-red">
-            Active: {progress.workshopState.voiceLabel || currentVoice} ({currentProvider})
+            Active: {progress.workshopState.voiceLabel || currentVoice} ({providerLabel(currentProvider)})
           </span>
         </div>
       )}

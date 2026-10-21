@@ -7,6 +7,7 @@ import {
   isEnglishOnlyVoice,
   getVoice,
 } from "@/lib/voice-catalog";
+import { resolveExplorerGreeting } from "@/lib/explorer-greeting";
 
 export function LanguagePicker() {
   const { progress, updateWorkshopState } = useProgressContext();
@@ -18,7 +19,13 @@ export function LanguagePicker() {
 
   function selectLanguage(code: string, disabled: boolean) {
     if (disabled) return;
-    updateWorkshopState({ language: code });
+    const nextState: Record<string, string> = { language: code };
+    const savedGreeting = progress.workshopState.welcomeGreeting;
+    if (savedGreeting) {
+      const localized = resolveExplorerGreeting(savedGreeting, code);
+      if (localized !== savedGreeting) nextState.welcomeGreeting = localized;
+    }
+    updateWorkshopState(nextState);
   }
 
   return (
@@ -51,7 +58,8 @@ export function LanguagePicker() {
       </p>
       <p className="text-xs text-text-muted mb-4">
         Conversation Relay supports 40+ languages -- these seven are the ones
-        this workshop&apos;s voices cover.
+        this workshop&apos;s voices cover. Preset greetings follow your choice;
+        custom greetings stay as you wrote them.
       </p>
 
       {englishOnly && lockedVoice && (

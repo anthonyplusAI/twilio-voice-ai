@@ -21,7 +21,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
@@ -36,11 +36,15 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # `next build` is the build-integrity gate (catches RSC/bundler errors).
       - run: pnpm build
+      # Includes the Codespaces Builder runtime and protected call routes.
+      # Several tests start real Next.js and Codespaces servers and reserve
+      # ephemeral ports. Run files serially to avoid startup and port races.
+      - run: node --test --test-concurrency=1 tests/*.test.mjs
 
   security:
     name: Security
@@ -56,7 +60,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: pnpm audit (advisory)

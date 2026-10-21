@@ -1,5 +1,7 @@
 import OpenAI from "openai";
-import { buildSystemPrompt } from "./system-prompt.mjs";
+import { parsePhoneNumberFromString } from "libphonenumber-js/max";
+import { buildSystemPrompt, WORKSHOP_LANGUAGE_CODES } from "./system-prompt.mjs";
+import { getCallMessage } from "./locale-messages.mjs";
 import { toolDefinitions, executeTool, HANDOFF_TOOL_NAME } from "./tools.mjs";
 import { recordEvent } from "../analytics/db.mjs";
 
@@ -13,11 +15,15 @@ export function handleConversationRelayConnection(ws) {
   let callSid = "";
   let config = {};
   let activeTools = toolDefinitions;
-  let handoffAllowed = true;
-  let isProcessing = false;
+  let handoffAllowed = false;
+  let handoffRequested = false;
+  let handoffDestinationReady = false;
+  let activeResponse = null;
+  let relayEnded = false;
   let silenceTimer = null;
   let silenceCount = 0;
   let callStartTime = null;
+  let currentLanguage = "en-US";
 
   function clearSilenceTimer() {
     if (silenceTimer) {
@@ -27,27 +33,91 @@ export function handleConversationRelayConnection(ws) {
   }
 
   function startSilenceTimer() {
+    if (relayEnded) return;
     clearSilenceTimer();
     const timeout = silenceCount === 0 ? SILENCE_FIRST_MS : SILENCE_SECOND_MS;
     silenceTimer = setTimeout(async () => {
-      if (isProcessing) return;
+      if (activeResponse || relayEnded) return;
       silenceCount++;
       if (silenceCount >= 3) {
         console.log(`[voice-agent] [${callSid}] Ending call after prolonged silence`);
-        sendToken(ws, "It seems like you may have stepped away. I'll end the call now. Goodbye!", true);
-        setTimeout(() => {
-          sendEnd(ws);
+        sendToken(ws, getCallMessage(currentLanguage, "silenceFinal"), true);
+        // Keep the farewell audible, but allow prompt/interrupt/DTMF to cancel
+        // the pending hangup through clearSilenceTimer().
+        silenceTimer = setTimeout(() => {
+          silenceTimer = null;
+          if (relayEnded) return;
+          relayEnded = true;
+          sendEnd(ws, JSON.stringify({
+            reasonCode: "silence-timeout",
+            language: currentLanguage,
+          }));
         }, 3000);
         return;
       }
       console.log(`[voice-agent] [${callSid}] Silence nudge #${silenceCount}`);
       const nudge = silenceCount === 1
-        ? "Are you still there? I'm here if you need anything."
-        : "I haven't heard from you in a while. I'll hang up shortly if there's nothing else.";
+        ? getCallMessage(currentLanguage, "silenceFirst")
+        : getCallMessage(currentLanguage, "silenceSecond");
       sendToken(ws, nudge, true);
       conversationHistory.push({ role: "assistant", content: nudge });
       startSilenceTimer();
     }, timeout);
+  }
+
+  function cancelActiveResponse() {
+    const response = activeResponse;
+    if (!response) return false;
+    activeResponse = null;
+    response.controller.abort();
+    // Tool messages from an unfinished turn must not leak into the next request.
+    conversationHistory.splice(response.historyStart);
+    return true;
+  }
+
+  function startResponse(userPrompt) {
+    if (relayEnded) return;
+    cancelActiveResponse();
+    conversationHistory.push({ role: "user", content: userPrompt });
+    const response = {
+      controller: new AbortController(),
+      historyStart: conversationHistory.length,
+    };
+    activeResponse = response;
+    const isCurrent = () => activeResponse === response &&
+      !response.controller.signal.aborted && !relayEnded;
+
+    void (async () => {
+      try {
+        const result = await streamLLMResponse(
+          openai, conversationHistory, ws, callSid, activeTools, handoffAllowed,
+          response.controller.signal, isCurrent,
+          (langCode) => { currentLanguage = langCode; },
+          () => currentLanguage
+        );
+        if (isCurrent() && result === "handoff") relayEnded = true;
+        if (isCurrent() && result === "tool-limit") {
+          const fallback = getCallMessage(currentLanguage, "toolLimit");
+          sendToken(ws, fallback, true);
+          conversationHistory.push({ role: "assistant", content: fallback });
+        }
+      } catch (err) {
+        if (!isCurrent() || err.name === "AbortError") return;
+        console.error(`[voice-agent] [${callSid}] LLM error:`, err.message);
+        // An error after a tool call can leave an assistant tool_calls entry
+        // without its matching result. Keep the caller's turn, then record the
+        // fallback they actually heard.
+        conversationHistory.splice(response.historyStart);
+        const fallback = getCallMessage(currentLanguage, "technicalIssue");
+        sendToken(ws, fallback, true);
+        conversationHistory.push({ role: "assistant", content: fallback });
+      } finally {
+        if (activeResponse === response) {
+          activeResponse = null;
+          startSilenceTimer();
+        }
+      }
+    })();
   }
 
   ws.on("message", async (data) => {
@@ -62,13 +132,25 @@ export function handleConversationRelayConnection(ws) {
     switch (message.type) {
       case "setup":
         callSid = message.callSid;
-        handoffAllowed = message.customParameters?.handoffEnabled !== "false";
+        handoffRequested = message.customParameters?.handoffEnabled === "true";
+        const destination = process.env.HANDOFF_PHONE_NUMBER?.trim() || "";
+        const phone = /^\+[1-9]\d{1,14}$/.test(destination)
+          ? parsePhoneNumberFromString(destination)
+          : null;
+        handoffDestinationReady = Boolean(
+          phone?.isValid() && ["US", "CA"].includes(phone.country) &&
+          !["PREMIUM_RATE", "SHARED_COST"].includes(phone.getType() || "")
+        );
+        handoffAllowed = handoffRequested && handoffDestinationReady;
         config = {
           agentName: message.customParameters?.agentName,
           personality: message.customParameters?.personality,
+          initialLanguage: SUPPORTED_LANGUAGE_CODES.has(message.customParameters?.initialLanguage)
+            ? message.customParameters.initialLanguage : "en-US",
           handoffEnabled: handoffAllowed,
         };
-        activeTools = filterTools(message.customParameters?.enabledTools);
+        currentLanguage = config.initialLanguage;
+        activeTools = filterTools(message.customParameters?.enabledTools, handoffAllowed);
         conversationHistory = [
           { role: "system", content: buildSystemPrompt(config) },
         ];
@@ -82,27 +164,11 @@ export function handleConversationRelayConnection(ws) {
         break;
 
       case "prompt":
+        if (message.last === false) break;
         silenceCount = 0;
         clearSilenceTimer();
-        if (isProcessing) {
-          console.warn(`[voice-agent] [${callSid}] Dropping overlapping prompt`);
-          break;
-        }
-        isProcessing = true;
         console.log(`[voice-agent] [${callSid}] Caller: ${message.voicePrompt}`);
-        conversationHistory.push({
-          role: "user",
-          content: message.voicePrompt,
-        });
-        try {
-          await streamLLMResponse(openai, conversationHistory, ws, callSid, activeTools, handoffAllowed);
-        } catch (err) {
-          console.error(`[voice-agent] [${callSid}] LLM error:`, err.message);
-          sendToken(ws, "I'm sorry, I encountered a technical issue. Please try again.", true);
-        } finally {
-          isProcessing = false;
-          startSilenceTimer();
-        }
+        startResponse(message.voicePrompt);
         break;
 
       case "interrupt":
@@ -111,43 +177,51 @@ export function handleConversationRelayConnection(ws) {
         console.log(
           `[voice-agent] [${callSid}] Interrupted after: "${message.utteranceUntilInterrupt}"`
         );
-        trimHistoryToInterrupt(
-          conversationHistory,
-          message.utteranceUntilInterrupt
-        );
+        if (cancelActiveResponse()) {
+          if (message.utteranceUntilInterrupt) {
+            conversationHistory.push({
+              role: "assistant", content: message.utteranceUntilInterrupt,
+            });
+          }
+        } else {
+          trimHistoryToInterrupt(conversationHistory, message.utteranceUntilInterrupt);
+        }
+        startSilenceTimer();
         break;
 
       case "dtmf":
         silenceCount = 0;
         clearSilenceTimer();
         console.log(`[voice-agent] [${callSid}] DTMF: ${message.digit}`);
-        if (isProcessing) {
-          console.warn(`[voice-agent] [${callSid}] Dropping DTMF during processing`);
-          break;
-        }
+        cancelActiveResponse();
         if (message.digit === "1") {
-          isProcessing = true;
-          conversationHistory.push({
-            role: "user",
-            content: "I want to check my order status.",
-          });
-          try {
-            await streamLLMResponse(openai, conversationHistory, ws, callSid, activeTools, handoffAllowed);
-          } catch (err) {
-            console.error(`[voice-agent] [${callSid}] LLM error:`, err.message);
-            sendToken(ws, "I'm sorry, I encountered a technical issue. Please try again.", true);
-          } finally {
-            isProcessing = false;
+          startResponse(getCallMessage(currentLanguage, "orderStatusRequest"));
+        } else if (message.digit === "2") {
+          if (handoffAllowed) {
+            relayEnded = true;
+            recordEvent(callSid, "handoff_triggered", { callSid, reason: "keypad_request" });
+            sendEnd(ws, JSON.stringify({
+              reasonCode: "live-agent-handoff",
+              reason: "keypad_request",
+              language: currentLanguage,
+            }));
+          } else {
+            const reply = handoffRequested && !handoffDestinationReady
+              ? getCallMessage(currentLanguage, "handoffUnavailable")
+              : getCallMessage(currentLanguage, "handoffDisabled");
+            sendToken(ws, reply, true);
+            conversationHistory.push({ role: "assistant", content: reply });
             startSilenceTimer();
           }
-        } else if (message.digit === "2") {
-          sendToken(ws, "Let me transfer you to a representative. Please hold for a moment.", true);
-          startSilenceTimer();
         } else if (message.digit === "0") {
-          sendToken(ws, "Returning to the main menu. Press 1 for order status, 2 for a representative, or just tell me what you need.", true);
+          const reply = getCallMessage(currentLanguage, "mainMenu");
+          sendToken(ws, reply, true);
+          conversationHistory.push({ role: "assistant", content: reply });
           startSilenceTimer();
         } else {
-          sendToken(ws, "I didn't recognize that option. Press 1 for order status, or 2 for a representative.", true);
+          const reply = getCallMessage(currentLanguage, "unknownDigit");
+          sendToken(ws, reply, true);
+          conversationHistory.push({ role: "assistant", content: reply });
           startSilenceTimer();
         }
         break;
@@ -166,6 +240,8 @@ export function handleConversationRelayConnection(ws) {
   });
 
   ws.on("close", () => {
+    relayEnded = true;
+    cancelActiveResponse();
     const durationMs = callStartTime ? Date.now() - callStartTime : 0;
     console.log(`[voice-agent] Call ${callSid} disconnected`);
     recordEvent(callSid, "call_ended", { callSid, durationMs });
@@ -174,11 +250,49 @@ export function handleConversationRelayConnection(ws) {
 }
 
 const LANG_MARKER_RE = /\[LANG:([a-z]{2}-[A-Z]{2})\]/g;
+const LANG_MARKER_PREFIX = "[LANG:";
+const LANG_MARKER_LENGTH = "[LANG:xx-XX]".length;
+const SUPPORTED_LANGUAGE_CODES = new Set(WORKSHOP_LANGUAGE_CODES);
 
-async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefinitions, handoffAllowed = true) {
+function streamOutsideLanguageMarkers(ws, pending, onLanguage) {
+  while (pending) {
+    const markerStart = pending.indexOf("[");
+    if (markerStart < 0) {
+      sendToken(ws, pending, false);
+      return "";
+    }
+    if (markerStart > 0) {
+      sendToken(ws, pending.slice(0, markerStart), false);
+      pending = pending.slice(markerStart);
+    }
+
+    // A marker can be split after any character. Hold its possible prefix
+    // until enough bytes arrive to distinguish it from ordinary text.
+    if (LANG_MARKER_PREFIX.startsWith(pending) ||
+        (pending.startsWith(LANG_MARKER_PREFIX) && pending.length < LANG_MARKER_LENGTH)) {
+      return pending;
+    }
+
+    const marker = pending.slice(0, LANG_MARKER_LENGTH).match(/^\[LANG:([a-z]{2}-[A-Z]{2})\]$/);
+    if (marker) {
+      onLanguage(marker[1]);
+      pending = pending.slice(LANG_MARKER_LENGTH);
+    } else {
+      sendToken(ws, "[", false);
+      pending = pending.slice(1);
+    }
+  }
+  return "";
+}
+
+async function streamLLMResponse(
+  openai, history, ws, callSid, tools, handoffAllowed,
+  signal, isCurrent, onLanguageSwitch, getCurrentLanguage
+) {
   let iterations = 0;
 
   while (iterations < MAX_TOOL_ITERATIONS) {
+    if (!isCurrent()) return;
     iterations++;
 
     const requestBody = {
@@ -190,7 +304,8 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
       requestBody.tools = tools;
     }
 
-    const stream = await openai.chat.completions.create(requestBody);
+    const stream = await openai.chat.completions.create(requestBody, { signal });
+    if (!isCurrent()) return;
 
     let fullResponse = "";
     let currentToolCalls = [];
@@ -198,6 +313,7 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
     let pendingSend = "";
 
     for await (const chunk of stream) {
+      if (!isCurrent()) return;
       const delta = chunk.choices[0]?.delta;
       if (!delta) continue;
 
@@ -218,29 +334,19 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
       if (delta.content) {
         fullResponse += delta.content;
         pendingSend += delta.content;
-
-        // Buffer text when we see a potential partial language marker starting
-        if (/\[LANG[^\]]*$/.test(pendingSend)) {
-          continue;
-        }
-
-        // Check for complete language markers
-        const langMatches = [...pendingSend.matchAll(LANG_MARKER_RE)];
-        if (langMatches.length > 0) {
-          const lastMatch = langMatches[langMatches.length - 1];
-          const langCode = lastMatch[1];
-          pendingSend = pendingSend.replace(LANG_MARKER_RE, "");
+        pendingSend = streamOutsideLanguageMarkers(ws, pendingSend, (langCode) => {
+          if (!SUPPORTED_LANGUAGE_CODES.has(langCode)) {
+            console.warn(`[voice-agent] [${callSid}] Ignoring unsupported language: ${langCode}`);
+            return;
+          }
           console.log(`[voice-agent] [${callSid}] Language switch: ${langCode}`);
           recordEvent(callSid, "language_switched", { callSid, langCode });
           sendLanguage(ws, langCode);
-        }
-
-        if (pendingSend) {
-          sendToken(ws, pendingSend, false);
-        }
-        pendingSend = "";
+          onLanguageSwitch(langCode);
+        });
       }
     }
+    if (!isCurrent()) return;
 
     // Flush any remaining buffered text (e.g. partial marker that never completed)
     if (pendingSend) {
@@ -286,19 +392,13 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
         console.log(`[voice-agent] [${callSid}] Handoff triggered: ${args.reason || ""}`);
         recordEvent(callSid, "handoff_triggered", { callSid, reason: args.reason });
 
-        const cleanFarewell = fullResponse.replace(LANG_MARKER_RE, "");
-        if (cleanFarewell.trim()) {
-          history.push({ role: "assistant", content: cleanFarewell });
-        }
-
-        setTimeout(() => {
-          sendEnd(ws, JSON.stringify({
-            reasonCode: "live-agent-handoff",
-            reason: args.reason || "caller_requested_human",
-            summary: args.summary || "",
-          }));
-        }, 1500);
-        return;
+        sendEnd(ws, JSON.stringify({
+          reasonCode: "live-agent-handoff",
+          reason: args.reason || "caller_requested_human",
+          summary: args.summary || "",
+          language: getCurrentLanguage(),
+        }));
+        return "handoff";
       }
 
       history.push({
@@ -336,12 +436,12 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
       );
     }
     sendToken(ws, "", true);
-    break;
+    return;
   }
 
-  if (iterations >= MAX_TOOL_ITERATIONS) {
+  if (isCurrent() && iterations >= MAX_TOOL_ITERATIONS) {
     console.warn(`[voice-agent] [${callSid}] Hit tool iteration limit`);
-    sendToken(ws, "I apologize, I'm having trouble completing that request.", true);
+    return "tool-limit";
   }
 }
 
@@ -368,28 +468,30 @@ function sendLanguage(ws, langCode) {
   }));
 }
 
-function filterTools(enabledParam) {
-  if (enabledParam === undefined || enabledParam === null) {
-    return toolDefinitions;
+export function filterTools(enabledParam, handoffEnabled = false) {
+  const allow = enabledParam === undefined || enabledParam === null
+    ? new Set(toolDefinitions.map((tool) => tool.function.name))
+    : new Set(
+        String(enabledParam)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      );
+  if (handoffEnabled) {
+    allow.add(HANDOFF_TOOL_NAME);
+  } else {
+    allow.delete(HANDOFF_TOOL_NAME);
   }
-  const allow = new Set(
-    String(enabledParam)
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
   return toolDefinitions.filter((t) => allow.has(t.function.name));
 }
 
 function trimHistoryToInterrupt(history, partialUtterance) {
-  for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i].role === "assistant") {
-      if (history[i].tool_calls) {
-        history.splice(i, history.length - i);
-      } else {
-        history[i] = { role: "assistant", content: partialUtterance };
-      }
-      break;
+  const lastMessage = history.at(-1);
+  if (lastMessage?.role === "assistant" && !lastMessage.tool_calls) {
+    if (partialUtterance) {
+      history[history.length - 1] = { role: "assistant", content: partialUtterance };
+    } else {
+      history.pop();
     }
   }
 }
