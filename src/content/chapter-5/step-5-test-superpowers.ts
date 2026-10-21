@@ -23,13 +23,13 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Your agent now has real capabilities. Let us test tool calling and handoff to make sure everything is wired up correctly. Make sure your server is running and `tunnel-url` prints your `trycloudflare.com` URL.",
+        "Your agent now has real capabilities. Let us test tool calling and handoff to make sure everything is wired up correctly. Keep `npm run dev` running (start it if needed) and check that `tunnel-url` prints your current `trycloudflare.com` URL. Saved JavaScript changes restart the server automatically.",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ node server.js
+      commands: `$ npm run dev
 Server listening on port 8080`,
     },
 
@@ -53,13 +53,13 @@ Server listening on port 8080`,
       type: "prose",
       audience: "builder",
       content:
-        "Or trigger your own `/call` endpoint from the terminal. Since the server is listening on port 8080 inside the Codespace, you can hit it on `localhost`:",
+        "Or trigger your own `/call` endpoint from the terminal. Send the request through the public tunnel so the server gives Twilio a reachable callback URL:",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ curl -X POST http://localhost:8080/call`,
+      commands: `$ curl -X POST "$(tunnel-url call)"`,
     },
 
     { type: "page-break" },
@@ -153,14 +153,14 @@ Server listening on port 8080`,
       type: "prose",
       audience: "builder",
       content:
-        'Say: "I need to speak with a real person." or "Transfer me to an agent." The AI should acknowledge the request and start the transfer to a human.',
+        'Say: "I need to speak with a real person." or "Transfer me to an agent." With a valid `HANDOFF_PHONE_NUMBER`, the AI should end the relay and Twilio should announce and start the transfer. Without one, the AI should explain that live handoff is unavailable and continue the conversation.',
     },
 
     {
       type: "prose",
       audience: "explorer",
       content:
-        'Say: "I need to speak with a real person." What happens next depends on your Live Handoff toggle. If Handoff is **on**, the agent should acknowledge the request and start the transfer. If Handoff is **off** (the default), the agent should politely decline and keep trying to help -- both outcomes are correct, depending on the toggle.',
+        'Say: "I need to speak with a real person." What happens next depends on your Live Handoff toggle. If Handoff is **on** and the facilitator configured a reachable destination, the agent should start a transfer. If Handoff is **off** (the default), it should politely decline and keep trying to help. If Handoff is on but no destination is configured, it should explain that live transfer is unavailable and stay on the call.',
     },
 
     {
@@ -168,7 +168,7 @@ Server listening on port 8080`,
       audience: "builder",
       variant: "warning",
       content:
-        "If you have not set up the transfer destination yet, the call will simply end when the handoff triggers. That is fine for testing -- the important thing is that the AI recognizes the request and initiates the transfer.",
+        "To test a live transfer, set `HANDOFF_PHONE_NUMBER` in `workshop/.env` to a second reachable phone, different from the caller's phone, in E.164 format, such as `+12065551234`, then restart `npm run dev`. An empty or placeholder destination cannot complete a handoff. The workshop site's Call Me button uses the site's Twilio account; your Codespace's `/call` route uses the account in `.env`. Whichever account places the call must be upgraded for ConversationRelay. A verified number on a trial account is not enough.",
     },
 
     { type: "section", title: "Checkpoint" },
@@ -177,13 +177,13 @@ Server listening on port 8080`,
       type: "verify",
       audience: "builder",
       question:
-        "Did the three core tests pass — weather lookup, order lookup, and handoff?",
+        "Did weather and order lookup work, and did handoff match your destination setup?",
       troubleshooting: [
         "Agent made up weather instead of calling the tool? Confirm you're passing `tools: tools` to `openai.chat.completions.create()` in `streamResponse`",
         "Order lookup returned nothing? Check the terminal for `Tool call: lookup_order` — if missing, the LLM isn't picking the tool. Tighten the tool description",
         "Handoff didn't trigger? Verify the `transfer_to_agent` tool is in your `tools` array and its handler is sending the `end` message with `handoffData`",
         "Second turn crashes with an OpenAI 400 error about missing tool responses? You're skipping the `role: \"tool\"` message with `tool_call_id` — OpenAI requires exactly one per tool call before the next request",
-        "Nothing happening at all? Restart your server and confirm `tunnel-url` returns a `trycloudflare.com` URL",
+        "Nothing happening at all? Confirm `npm run dev` is running and `tunnel-url` returns a `trycloudflare.com` URL",
         "Tried the optional multi-tool test and only got half an answer? Make sure `handleToolCalls` loops over every entry in `toolCalls` before calling `streamResponse` again",
       ],
     },
@@ -192,12 +192,12 @@ Server listening on port 8080`,
       type: "verify",
       audience: "explorer",
       question:
-        "Did the agent use its tools and hand off when asked — weather, order, and live handoff?",
+        "Did the agent use its selected tools and respond correctly to a handoff request?",
       troubleshooting: [
-        "Weather answer sounded made up? The agent ignored its tool. Head back to Pick Your Tools and confirm Check Weather is toggled on",
-        "Order lookup didn't return the real shipping info? Same thing — check that Look Up Order is on, and try the exact order number 123",
+        "Weather answer skipped the sample tool data? Head back to Pick Your Tools and confirm Check Weather is toggled on",
+        "Order lookup didn't return the mock shipping status? Check that Look Up Order is on, and try the exact order number 123",
         "Agent only answered half of a two-part question? That's normal on the first try — phone it again and say both parts in one sentence",
-        "Asked for a human and nothing happened? Handoff is off by default -- the Live Handoff toggle controls it",
+        "Asked for a human and nothing happened? Handoff is off by default. If you turned it on but the agent says transfer is unavailable, ask the facilitator whether a live destination is configured",
         "Call never connected? Re-enter your phone number in the Call Me box and try again",
       ],
     },
@@ -206,7 +206,7 @@ Server listening on port 8080`,
       type: "prose",
       audience: "explorer",
       content:
-        "With tool calling and handoff working, the agent can now do three kinds of work: look up information through tools, take actions based on what it looks up, and pass the call to a human when the situation calls for one.",
+        "With tool calling in place, the agent can look up workshop sample data and take actions based on those results. It can also pass the call to a human when live handoff is configured.",
     },
 
     {

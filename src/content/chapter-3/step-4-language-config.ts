@@ -99,12 +99,12 @@ export default {
   <Connect>
     <ConversationRelay
       url="wss://<your-server-host>/ws"
-      voice="es-US-Neural2-A"
+      voice="es-ES-Neural2-H"
       ttsProvider="Google"
       language="es-ES"
       transcriptionProvider="Google"
       speechModel="telephony"
-      welcomeGreeting="Hello! How can I help you today?"
+      welcomeGreeting="¡Hola! ¿En qué puedo ayudarte hoy?"
     />
   </Connect>
 </Response>`,

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-URL_FILE=/tmp/cloudflared-url
-if [ -s "$URL_FILE" ]; then
-  echo "$(cat "$URL_FILE")/twiml"
-else
-  # Find the repo root by locating the .devcontainer directory under /workspaces.
-  TUNNEL_SCRIPT=$(find /workspaces -maxdepth 3 -type f -name start-tunnel.sh 2>/dev/null | head -1)
-  if [ -n "$TUNNEL_SCRIPT" ]; then
-    echo "Tunnel not running. Start it with: bash $TUNNEL_SCRIPT" >&2
-  else
-    echo "Tunnel not running. Start it with: bash <repo-root>/.devcontainer/start-tunnel.sh" >&2
-  fi
-  exit 1
+set -euo pipefail
+
+ROUTE="${1:-twiml}"
+if [[ $# -gt 1 || ( "$ROUTE" != "twiml" && "$ROUTE" != "call" ) ]]; then
+  echo "Usage: tunnel-url [twiml|call]" >&2
+  exit 2
 fi
+
+# setup.sh links this command to the checkout, so it can recover a stopped
+# tunnel or find a URL that cloudflared printed after the initial wait.
+SOURCE_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
+exec bash "$SCRIPT_DIR/start-tunnel.sh" --url "$ROUTE"

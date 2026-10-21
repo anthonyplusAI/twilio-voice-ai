@@ -17,10 +17,21 @@ export async function POST(request: NextRequest) {
     console.log(
       `[connect-action] Handoff requested: ${handoffData.reason || "no reason provided"}`
     );
+    const destination = process.env.HANDOFF_PHONE_NUMBER?.trim();
+    if (!destination || !/^\+[1-9]\d{1,14}$/.test(destination)) {
+      return new Response(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Sorry, live handoff is unavailable right now. Goodbye.</Say>
+  <Hangup/>
+</Response>`, {
+        headers: { "Content-Type": "application/xml" },
+      });
+    }
+
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say>Please hold while we connect you to an agent.</Say>
-  <Dial>${process.env.HANDOFF_PHONE_NUMBER || "+15551234567"}</Dial>
+  <Dial>${destination}</Dial>
 </Response>`;
 
     return new Response(twiml.trim(), {

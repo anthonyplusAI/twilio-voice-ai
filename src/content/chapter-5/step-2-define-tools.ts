@@ -119,7 +119,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Let us add a second tool for looking up order status:",
+        "**Replace the first `const tools = [...]` block in `tool-handlers.js` with this expanded array.** It keeps the weather tool and adds order lookup and a joke. Do not paste it below the first array; declaring `const tools` twice in one file causes a syntax error.",
     },
 
     {
@@ -140,6 +140,11 @@ export default {
           city: {
             type: "string",
             description: "The city name"
+          },
+          unit: {
+            type: "string",
+            enum: ["fahrenheit", "celsius"],
+            description: "Temperature unit preference"
           }
         },
         required: ["city"]
@@ -230,17 +235,17 @@ const toolHandlers = {
       "123": {
         status: "shipped",
         tracking: "1Z999AA10123456784",
-        eta: "May 7, 2026"
+        eta: "tomorrow"
       },
       "456": {
         status: "processing",
         tracking: null,
-        eta: "May 7, 2026"
+        eta: "not available yet"
       },
       "789": {
         status: "delivered",
         tracking: "1Z999AA10987654321",
-        eta: "Delivered May 2, 2026"
+        eta: "already delivered"
       }
     };
 
@@ -281,7 +286,7 @@ module.exports = { tools, toolHandlers };`,
       type: "prose",
       audience: "builder",
       content:
-        "Include the tools list in every request to the AI:",
+        "Inside your existing `streamResponse`, keep its per-caller `state` and include the tools list in every request to the AI:",
     },
 
     {
@@ -290,19 +295,19 @@ module.exports = { tools, toolHandlers };`,
       language: "javascript",
       file: "server.js",
       highlight: [4],
-      code: `const response = await openai.chat.completions.create({
+      code: `const stream = await openai.chat.completions.create({
   model: "gpt-5.4-nano",
-  messages: conversationHistory,
-  tools: tools,
+  messages: state.conversationHistory,
+  tools,
   stream: true,
-});`,
+}, { signal: controller.signal });`,
     },
 
     {
       type: "solution",
       audience: "builder",
       explanation:
-        "`tool-handlers.js` holds the `tools` schema plus the `toolHandlers` dispatch map and exports both. `server.js` requires that module and passes the `tools` array into every `openai.chat.completions.create` call. Switch between the two files with the tabs above the code.\n\nHeads-up on the `streamResponse` function in this solution: it is the baseline for this page only. The next page replaces it with a tool-aware version that handles tool calls and recursion. Do not invest time polishing this version -- you will overwrite it next.",
+        "`tool-handlers.js` holds the `tools` schema plus the `toolHandlers` dispatch map and exports both. `server.js` requires that module and passes the `tools` array into every `openai.chat.completions.create` call. Switch between the two files with the tabs above the code. When copying this complete example, keep your chosen `<ConversationRelay>` settings from Chapter 3, including voice, provider, language, speech model, and welcome greeting; the `/twiml` values shown here are defaults.\n\nHeads-up on the `streamResponse` function in this solution: it is the baseline for this page only. The next page replaces it with a tool-aware version that handles tool calls and recursion. Do not invest time polishing this version -- you will overwrite it next.",
       files: [
         {
           file: "tool-handlers.js",
@@ -384,9 +389,9 @@ const toolHandlers = {
 
   lookup_order: async ({ order_id }, _ws) => {
     const mockOrders = {
-      "123": { status: "shipped", tracking: "1Z999AA10123456784", eta: "May 7, 2026" },
-      "456": { status: "processing", tracking: null, eta: "May 7, 2026" },
-      "789": { status: "delivered", tracking: "1Z999AA10987654321", eta: "Delivered May 2, 2026" },
+      "123": { status: "shipped", tracking: "1Z999AA10123456784", eta: "tomorrow" },
+      "456": { status: "processing", tracking: null, eta: "not available yet" },
+      "789": { status: "delivered", tracking: "1Z999AA10987654321", eta: "already delivered" },
     };
     const order = mockOrders[order_id];
     if (!order) {
@@ -445,133 +450,110 @@ LANGUAGE DETECTION:
 
 const SILENCE_TIMEOUT_MS = 8000;
 const MAX_SILENCE_PROMPTS = 2;
+const FAREWELL_DELAY_MS = 6000;
+
 const LANG_MARKER_REGEX = /^\\[LANG:([\\w-]+)\\]/;
 
-// Module-scope state (single-caller workshop server)
-const conversationHistory = [
-  { role: "system", content: SYSTEM_PROMPT },
-];
-let activeStream = null;
-let silenceTimer = null;
-let silencePromptCount = 0;
-let currentLanguage = "en-US";
+const callStates = new WeakMap();
+
+function stateFor(ws) {
+  let state = callStates.get(ws);
+  if (!state) {
+    state = {
+      conversationHistory: [{ role: "system", content: SYSTEM_PROMPT }],
+      activeStream: null,
+      closed: false,
+      silenceTimer: null,
+      endTimer: null,
+      silencePromptCount: 0,
+      currentLanguage: null,
+    };
+    callStates.set(ws, state);
+  }
+  return state;
+}
 
 function sendText(ws, token, last = false) {
+  if (ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: "text", token, last }));
 }
 
-function processLLMResponse(ws, text) {
-  const match = text.match(LANG_MARKER_REGEX);
-
-  if (match) {
-    const newLang = match[1];
-
-    if (newLang !== currentLanguage) {
-      console.log(\`Switching language: \${currentLanguage} -> \${newLang}\`);
-      currentLanguage = newLang;
-
-      ws.send(JSON.stringify({
-        type: "language",
-        ttsLanguage: newLang,
-        transcriptionLanguage: newLang,
-      }));
-    }
-
-    text = text.replace(LANG_MARKER_REGEX, "").trim();
-  }
-
-  // streamResponse calls this per sentence and emits the terminating
-  // last=true marker once the full LLM response completes.
-  if (text) {
-    sendText(ws, text);
-  }
-}
-
-function resetSilenceTimer(ws) {
-  clearTimeout(silenceTimer);
-  silencePromptCount = 0;
-
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
-  }, SILENCE_TIMEOUT_MS);
-}
-
-function handleSilence(ws) {
-  silencePromptCount++;
-
-  if (silencePromptCount >= MAX_SILENCE_PROMPTS) {
-    sendText(ws, "It seems like you may have stepped away. " +
-      "I'll end the call for now. Feel free to call back anytime!", true);
-    ws.send(JSON.stringify({ type: "end" }));
-    return;
-  }
-
-  const prompts = [
-    "Are you still there? Take your time -- I'm here whenever you're ready.",
-    "I'm still here if you need anything. Is there something I can help with?",
-  ];
-
-  sendText(ws, prompts[silencePromptCount - 1], true);
-
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
-  }, SILENCE_TIMEOUT_MS);
-}
-
 async function streamResponse(ws) {
-  activeStream = new AbortController();
-
-  const stream = await openai.chat.completions.create(
-    {
-      model: "gpt-5.4-nano",
-      messages: conversationHistory,
-      tools: tools,
-      stream: true,
-    },
-    { signal: activeStream.signal }
-  );
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  const controller = new AbortController();
+  state.activeStream = controller;
 
   try {
+    const stream = await openai.chat.completions.create({
+      model: "gpt-5.4-nano",
+      messages: state.conversationHistory,
+      tools,
+      stream: true,
+    }, { signal: controller.signal });
+
+    if (controller.signal.aborted || state.closed) return;
+    let textBuffer = "";
     let assistantText = "";
     for await (const chunk of stream) {
+      if (controller.signal.aborted || state.closed) return;
       const token = chunk.choices[0]?.delta?.content ?? "";
-      if (token) {
-        assistantText += token;
-        sendText(ws, token);
+      if (!token) continue;
+      textBuffer += token;
+      assistantText += token;
+
+      // Inspect whole sentences so a [LANG:xx-XX] marker is never spoken.
+      let match;
+      while ((match = textBuffer.match(/[.!?](\\s|$)/))) {
+        const sentenceEnd = match.index + 1;
+        processLLMResponse(ws, textBuffer.slice(0, sentenceEnd));
+        textBuffer = textBuffer.slice(sentenceEnd + (match[1] ? match[1].length : 0));
       }
     }
+    if (textBuffer.trim()) processLLMResponse(ws, textBuffer.trim());
     sendText(ws, "", true);
-    conversationHistory.push({ role: "assistant", content: assistantText });
+    state.conversationHistory.push({ role: "assistant", content: assistantText });
   } catch (err) {
-    if (err.name !== "AbortError") throw err;
+    if (controller.signal.aborted || err.name === "AbortError" || state.closed) return;
+    console.error("LLM error:", err.message);
+    const apology = "I'm sorry, I'm having a technical issue. Could you say that again?";
+    sendText(ws, apology, true);
+    state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    activeStream = null;
+    if (state.activeStream === controller) state.activeStream = null;
   }
 }
 
 function handlePrompt(ws, msg) {
-  conversationHistory.push({ role: "user", content: msg.voicePrompt });
+  const state = stateFor(ws);
+  if (!state.currentLanguage && typeof msg.lang === "string" && msg.lang) {
+    state.currentLanguage = msg.lang;
+  }
+  state.conversationHistory.push({ role: "user", content: msg.voicePrompt });
   streamResponse(ws);
 }
 
-function handleInterrupt(msg) {
+function handleInterrupt(ws, msg) {
   console.log("Caller interrupted. Heard:", msg.utteranceUntilInterrupt);
 
-  if (activeStream) {
-    activeStream.abort();
-    activeStream = null;
-  }
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  state.activeStream = null;
 
-  const lastMsg = conversationHistory[conversationHistory.length - 1];
+  const lastMsg = state.conversationHistory[state.conversationHistory.length - 1];
   if (lastMsg?.role === "assistant") {
     lastMsg.content = msg.utteranceUntilInterrupt;
+  } else if (msg.utteranceUntilInterrupt) {
+    state.conversationHistory.push({
+      role: "assistant", content: msg.utteranceUntilInterrupt
+    });
   }
 }
 
 function handleDtmfInput(ws, digit) {
   switch (digit) {
     case "1":
-      conversationHistory.push({
+      stateFor(ws).conversationHistory.push({
         role: "user",
         content: "I want to check my order status.",
       });
@@ -581,6 +563,7 @@ function handleDtmfInput(ws, digit) {
     case "2":
       sendText(ws, "Let me transfer you to a representative. " +
         "Please hold for a moment.", true);
+      // Chapter 5 adds the actual transfer handoff.
       break;
 
     case "0":
@@ -596,8 +579,75 @@ function handleDtmfInput(ws, digit) {
   }
 }
 
+// Send DTMF tones outbound when another IVR needs them.
+function sendDigits(ws, digits) {
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: "sendDigits", digits }));
+}
+
+function processLLMResponse(ws, text) {
+  const state = stateFor(ws);
+  text = text.trimStart();
+  const match = text.match(LANG_MARKER_REGEX);
+  if (match) {
+    const newLang = match[1];
+    if (newLang !== state.currentLanguage && !state.closed && ws.readyState === 1) {
+      console.log("Switching language: " + state.currentLanguage + " -> " + newLang);
+      state.currentLanguage = newLang;
+      ws.send(JSON.stringify({
+        type: "language",
+        ttsLanguage: newLang,
+        transcriptionLanguage: newLang,
+      }));
+    }
+    text = text.replace(LANG_MARKER_REGEX, "").trim();
+  }
+  if (text) sendText(ws, text);
+}
+
+function resetSilenceTimer(ws) {
+  const state = stateFor(ws);
+  clearTimeout(state.silenceTimer);
+  clearTimeout(state.endTimer);
+  if (state.closed || ws.readyState !== 1) return;
+  state.silencePromptCount = 0;
+  state.endTimer = null;
+  state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
+}
+
+function handleSilence(ws) {
+  const state = stateFor(ws);
+  if (state.closed || ws.readyState !== 1) return;
+  state.silenceTimer = null;
+  state.silencePromptCount++;
+
+  const prompts = [
+    "Are you still there? Take your time -- I'm here whenever you're ready.",
+    "I'm still here if you need anything. Is there something I can help with?",
+  ];
+  if (state.silencePromptCount <= MAX_SILENCE_PROMPTS) {
+    sendText(ws, prompts[state.silencePromptCount - 1], true);
+    state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
+    return;
+  }
+
+  sendText(ws, "I'll end the call now. Please call back anytime.", true);
+  state.endTimer = setTimeout(() => {
+    if (state.closed || ws.readyState !== 1) return;
+    state.closed = true;
+    ws.send(JSON.stringify({ type: "end" }));
+  }, FAREWELL_DELAY_MS);
+}
+
 function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || stateFor(ws).closed) return;
 
   switch (msg.type) {
     case "setup":
@@ -607,12 +657,12 @@ function handleMessage(ws, data) {
 
     case "prompt":
       resetSilenceTimer(ws);
-      handlePrompt(ws, msg);
+      if (msg.last !== false && typeof msg.voicePrompt === "string") handlePrompt(ws, msg);
       break;
 
     case "interrupt":
       resetSilenceTimer(ws);
-      handleInterrupt(msg);
+      handleInterrupt(ws, msg);
       break;
 
     case "dtmf":
@@ -633,9 +683,15 @@ const server = http.createServer(async (req, res) => {
   <Connect>
     <ConversationRelay
       url="wss://\${req.headers.host}/ws"
+      voice="21m00Tcm4TlvDq8ikWAM"
+      ttsProvider="ElevenLabs"
+      language="en-US"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
       welcomeGreeting="Hello! How can I help you today?"
       dtmfDetection="true"
       interruptible="any"
+      interruptSensitivity="medium"
       reportInputDuringAgentSpeech="any"
     />
   </Connect>
@@ -678,7 +734,11 @@ wss.on("connection", (ws) => {
   ws.on("message", (data) => handleMessage(ws, data));
 
   ws.on("close", () => {
-    clearTimeout(silenceTimer);
+    const state = stateFor(ws);
+    state.closed = true;
+    state.activeStream?.abort();
+    clearTimeout(state.silenceTimer);
+    clearTimeout(state.endTimer);
     console.log("Call ended, timers cleared.");
   });
 

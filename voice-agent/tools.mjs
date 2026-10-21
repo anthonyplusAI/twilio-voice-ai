@@ -62,7 +62,7 @@ export const toolDefinitions = [
           },
           summary: {
             type: "string",
-            description: "One- to two-sentence summary of the conversation so the human agent doesn't have to start from zero.",
+            description: "One- to two-sentence summary recorded in handoff metadata for a future agent workspace integration.",
           },
         },
         required: ["reason", "summary"],
@@ -100,17 +100,17 @@ const MOCK_ORDERS = {
   "123": {
     status: "Shipped",
     items: "SIGNAL Shirt",
-    delivery: "May 7, 2026",
+    delivery: "Tomorrow",
   },
   "456": {
     status: "Processing",
     items: "Twilio Sticker Pack",
-    delivery: "May 7, 2026",
+    delivery: "Not available yet",
   },
   "789": {
     status: "Delivered",
     items: "Twilio Hoodie, Twilio Notebook",
-    delivery: "May 7, 2026",
+    delivery: "Already delivered",
   },
 };
 

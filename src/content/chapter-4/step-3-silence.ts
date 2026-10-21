@@ -49,48 +49,43 @@ export default {
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      highlight: ["1-33"],
+      highlight: ["1-20", "22-45"],
       code: `const SILENCE_TIMEOUT_MS = 8000;   // 8 seconds of silence
-const MAX_SILENCE_PROMPTS = 2;      // Prompt twice, then end call
-
-let silenceTimer = null;
-let silencePromptCount = 0;
+const MAX_SILENCE_PROMPTS = 2;      // Two nudges before farewell
+const FAREWELL_DELAY_MS = 6000;     // Let Twilio speak the farewell
 
 function resetSilenceTimer(ws) {
-  clearTimeout(silenceTimer);
-  silencePromptCount = 0;
-
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
-  }, SILENCE_TIMEOUT_MS);
+  const state = stateFor(ws);
+  clearTimeout(state.silenceTimer);
+  clearTimeout(state.endTimer);
+  if (state.closed || ws.readyState !== 1) return;
+  state.silencePromptCount = 0;
+  state.endTimer = null;
+  state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
 }
 
 function handleSilence(ws) {
-  // Bail if the caller hung up between the timer firing and now.
-  if (ws.readyState !== ws.OPEN) return;
+  const state = stateFor(ws);
+  if (state.closed || ws.readyState !== 1) return;
+  state.silenceTimer = null;
+  state.silencePromptCount++;
 
-  silencePromptCount++;
-
-  if (silencePromptCount >= MAX_SILENCE_PROMPTS) {
-    // Too many silences -- end the call gracefully
-    sendText(ws, "It seems like you may have stepped away. " +
-      "I'll end the call for now. Feel free to call back anytime!", true);
-    ws.send(JSON.stringify({ type: "end" }));
-    return;
-  }
-
-  // Gentle nudge
   const prompts = [
     "Are you still there? Take your time -- I'm here whenever you're ready.",
     "I'm still here if you need anything. Is there something I can help with?",
   ];
+  if (state.silencePromptCount <= MAX_SILENCE_PROMPTS) {
+    sendText(ws, prompts[state.silencePromptCount - 1], true);
+    state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
+    return;
+  }
 
-  sendText(ws, prompts[silencePromptCount - 1], true);
-
-  // Reset the timer for the next silence check
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
-  }, SILENCE_TIMEOUT_MS);
+  sendText(ws, "I'll end the call now. Please call back anytime.", true);
+  state.endTimer = setTimeout(() => {
+    if (state.closed || ws.readyState !== 1) return;
+    state.closed = true;
+    ws.send(JSON.stringify({ type: "end" }));
+  }, FAREWELL_DELAY_MS);
 }`,
     },
 
@@ -102,7 +97,7 @@ function handleSilence(ws) {
       type: "prose",
       audience: "builder",
       content:
-        "Reset the silence timer every time the caller speaks or presses a key. First, update your `handleMessage` function to reset the timer on every event type:",
+        "Reset the silence timer when the call starts and whenever the caller speaks or presses a key. Replace your existing `handleMessage` with this version, keeping the per-call state from Step 1:",
     },
 
     {
@@ -110,9 +105,16 @@ function handleSilence(ws) {
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      highlight: [8, 12, 18, 23],
+      highlight: ["1-8", "11-30"],
       code: `function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || stateFor(ws).closed) return;
 
   switch (msg.type) {
     case "setup":
@@ -123,12 +125,12 @@ function handleSilence(ws) {
 
     case "prompt":
       resetSilenceTimer(ws);  // Caller spoke -- reset the timer
-      handlePrompt(ws, msg);
+      if (msg.last !== false && typeof msg.voicePrompt === "string") handlePrompt(ws, msg);
       break;
 
     case "interrupt":
       resetSilenceTimer(ws);  // Interruption counts as activity
-      handleInterrupt(msg);
+      handleInterrupt(ws, msg);
       break;
 
     case "dtmf":
@@ -143,7 +145,7 @@ function handleSilence(ws) {
       type: "prose",
       audience: "builder",
       content:
-        "Second, inside your **existing** `wss.on(\"connection\", ...)` callback, add a `ws.on(\"close\", ...)` handler that clears the timer when the call ends. Don't paste a second `wss.on(\"connection\")` -- nest the new close handler alongside the `ws.on(\"message\", ...)` you already have:",
+        "Second, inside your **existing** `wss.on(\"connection\", ...)` callback, replace the Step 1 `ws.on(\"close\", ...)` handler with this version so only this call's timers are cleared:",
     },
 
     {
@@ -151,14 +153,14 @@ function handleSilence(ws) {
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      highlight: ["3-6"],
-      code: `wss.on("connection", (ws) => {
-  // ...your existing ws.on("message", (data) => handleMessage(ws, data))
-  // stays here; add the close handler below:
-  ws.on("close", () => {
-    clearTimeout(silenceTimer);
-    console.log("Call ended, timers cleared.");
-  });
+      highlight: ["1-8"],
+      code: `ws.on("close", () => {
+  const state = stateFor(ws);
+  state.closed = true;
+  state.activeStream?.abort();
+  clearTimeout(state.silenceTimer);
+  clearTimeout(state.endTimer);
+  console.log("Call ended, timers cleared.");
 });`,
     },
 
@@ -167,7 +169,7 @@ function handleSilence(ws) {
       audience: "builder",
       variant: "warning",
       content:
-        "Be careful with the silence timeout value. Too short (under 5 seconds) and you will interrupt callers who are thinking. Too long (over 15 seconds) and the experience feels unresponsive. Start with 8-10 seconds and adjust based on your use case.\n\nAlso remember that the total dead-air budget is `SILENCE_TIMEOUT_MS × MAX_SILENCE_PROMPTS`. With the defaults (8s × 2) the caller sits in silence for up to 16 seconds before the call ends, so tune both numbers together.",
+        "Be careful with the silence timeout value. Too short (under 5 seconds) and you will interrupt callers who are thinking. Too long (over 15 seconds) and the experience feels unresponsive. Start with 8-10 seconds and adjust based on your use case.\n\nWith the defaults, the caller hears nudges after 8 and 16 seconds, then a farewell after 24 seconds. The server waits another 6 seconds before ending the call so the farewell can play. Tune both delays for your voice and response length.",
     },
 
     { type: "page-break" },
@@ -186,11 +188,17 @@ function handleSilence(ws) {
       audience: "builder",
       language: "xml",
       file: "twiml-response",
-      highlight: [6],
+      highlight: [12],
       code: `<Response>
   <Connect>
     <ConversationRelay
       url="wss://<your-server-host>/ws"
+      voice="21m00Tcm4TlvDq8ikWAM"
+      ttsProvider="ElevenLabs"
+      language="en-US"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
+      welcomeGreeting="Hello! How can I help you today?"
       dtmfDetection="true"
       interruptible="any"
       interruptSensitivity="medium"
@@ -221,7 +229,7 @@ function handleSilence(ws) {
       file: "server.js",
       language: "javascript",
       explanation:
-        "Builds on the previous step by adding silence detection constants, a resetSilenceTimer/handleSilence pair, integrating timer resets into every handleMessage case, and clearing the timer on WebSocket close.",
+        "Builds on the previous step by adding per-call silence timers, two nudges, a delayed farewell, timer resets on caller activity, and cleanup on WebSocket close. If you replace your whole server.js with this example, preserve any Chapter 3 persona, voice, greeting, language, and transcription values you chose.",
       code: `require("dotenv").config();
 const { WebSocketServer } = require("ws");
 const http = require("http");
@@ -247,67 +255,48 @@ If you don't know something, say so honestly.\`;
 
 const SILENCE_TIMEOUT_MS = 8000;
 const MAX_SILENCE_PROMPTS = 2;
+const FAREWELL_DELAY_MS = 6000;
 
-// Module-scope state (single-caller workshop server)
-const conversationHistory = [
-  { role: "system", content: SYSTEM_PROMPT },
-];
-let activeStream = null;
-let silenceTimer = null;
-let silencePromptCount = 0;
+const callStates = new WeakMap();
+
+function stateFor(ws) {
+  let state = callStates.get(ws);
+  if (!state) {
+    state = {
+      conversationHistory: [{ role: "system", content: SYSTEM_PROMPT }],
+      activeStream: null,
+      closed: false,
+      silenceTimer: null,
+      endTimer: null,
+      silencePromptCount: 0,
+    };
+    callStates.set(ws, state);
+  }
+  return state;
+}
 
 function sendText(ws, token, last = false) {
+  if (ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: "text", token, last }));
 }
 
-function resetSilenceTimer(ws) {
-  clearTimeout(silenceTimer);
-  silencePromptCount = 0;
-
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
-  }, SILENCE_TIMEOUT_MS);
-}
-
-function handleSilence(ws) {
-  if (ws.readyState !== ws.OPEN) return;
-
-  silencePromptCount++;
-
-  if (silencePromptCount >= MAX_SILENCE_PROMPTS) {
-    sendText(ws, "It seems like you may have stepped away. " +
-      "I'll end the call for now. Feel free to call back anytime!", true);
-    ws.send(JSON.stringify({ type: "end" }));
-    return;
-  }
-
-  const prompts = [
-    "Are you still there? Take your time -- I'm here whenever you're ready.",
-    "I'm still here if you need anything. Is there something I can help with?",
-  ];
-
-  sendText(ws, prompts[silencePromptCount - 1], true);
-
-  silenceTimer = setTimeout(() => {
-    handleSilence(ws);
-  }, SILENCE_TIMEOUT_MS);
-}
-
 async function streamResponse(ws) {
-  activeStream = new AbortController();
-
-  const stream = await openai.chat.completions.create(
-    {
-      model: "gpt-5.4-nano",
-      messages: conversationHistory,
-      stream: true,
-    },
-    { signal: activeStream.signal }
-  );
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  const controller = new AbortController();
+  state.activeStream = controller;
 
   try {
+    const stream = await openai.chat.completions.create({
+      model: "gpt-5.4-nano",
+      messages: state.conversationHistory,
+      stream: true,
+    }, { signal: controller.signal });
+
+    if (controller.signal.aborted || state.closed) return;
     let assistantText = "";
     for await (const chunk of stream) {
+      if (controller.signal.aborted || state.closed) return;
       const token = chunk.choices[0]?.delta?.content ?? "";
       if (token) {
         assistantText += token;
@@ -315,37 +304,44 @@ async function streamResponse(ws) {
       }
     }
     sendText(ws, "", true);
-    conversationHistory.push({ role: "assistant", content: assistantText });
+    state.conversationHistory.push({ role: "assistant", content: assistantText });
   } catch (err) {
-    if (err.name !== "AbortError") throw err;
+    if (controller.signal.aborted || err.name === "AbortError" || state.closed) return;
+    console.error("LLM error:", err.message);
+    const apology = "I'm sorry, I'm having a technical issue. Could you say that again?";
+    sendText(ws, apology, true);
+    state.conversationHistory.push({ role: "assistant", content: apology });
   } finally {
-    activeStream = null;
+    if (state.activeStream === controller) state.activeStream = null;
   }
 }
 
 function handlePrompt(ws, msg) {
-  conversationHistory.push({ role: "user", content: msg.voicePrompt });
+  stateFor(ws).conversationHistory.push({ role: "user", content: msg.voicePrompt });
   streamResponse(ws);
 }
 
-function handleInterrupt(msg) {
+function handleInterrupt(ws, msg) {
   console.log("Caller interrupted. Heard:", msg.utteranceUntilInterrupt);
 
-  if (activeStream) {
-    activeStream.abort();
-    activeStream = null;
-  }
+  const state = stateFor(ws);
+  state.activeStream?.abort();
+  state.activeStream = null;
 
-  const lastMsg = conversationHistory[conversationHistory.length - 1];
+  const lastMsg = state.conversationHistory[state.conversationHistory.length - 1];
   if (lastMsg?.role === "assistant") {
     lastMsg.content = msg.utteranceUntilInterrupt;
+  } else if (msg.utteranceUntilInterrupt) {
+    state.conversationHistory.push({
+      role: "assistant", content: msg.utteranceUntilInterrupt
+    });
   }
 }
 
 function handleDtmfInput(ws, digit) {
   switch (digit) {
     case "1":
-      conversationHistory.push({
+      stateFor(ws).conversationHistory.push({
         role: "user",
         content: "I want to check my order status.",
       });
@@ -355,6 +351,7 @@ function handleDtmfInput(ws, digit) {
     case "2":
       sendText(ws, "Let me transfer you to a representative. " +
         "Please hold for a moment.", true);
+      // Chapter 5 adds the actual transfer handoff.
       break;
 
     case "0":
@@ -370,8 +367,55 @@ function handleDtmfInput(ws, digit) {
   }
 }
 
+// Send DTMF tones outbound when another IVR needs them.
+function sendDigits(ws, digits) {
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: "sendDigits", digits }));
+}
+
+function resetSilenceTimer(ws) {
+  const state = stateFor(ws);
+  clearTimeout(state.silenceTimer);
+  clearTimeout(state.endTimer);
+  if (state.closed || ws.readyState !== 1) return;
+  state.silencePromptCount = 0;
+  state.endTimer = null;
+  state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
+}
+
+function handleSilence(ws) {
+  const state = stateFor(ws);
+  if (state.closed || ws.readyState !== 1) return;
+  state.silenceTimer = null;
+  state.silencePromptCount++;
+
+  const prompts = [
+    "Are you still there? Take your time -- I'm here whenever you're ready.",
+    "I'm still here if you need anything. Is there something I can help with?",
+  ];
+  if (state.silencePromptCount <= MAX_SILENCE_PROMPTS) {
+    sendText(ws, prompts[state.silencePromptCount - 1], true);
+    state.silenceTimer = setTimeout(() => handleSilence(ws), SILENCE_TIMEOUT_MS);
+    return;
+  }
+
+  sendText(ws, "I'll end the call now. Please call back anytime.", true);
+  state.endTimer = setTimeout(() => {
+    if (state.closed || ws.readyState !== 1) return;
+    state.closed = true;
+    ws.send(JSON.stringify({ type: "end" }));
+  }, FAREWELL_DELAY_MS);
+}
+
 function handleMessage(ws, data) {
-  const msg = JSON.parse(data);
+  let msg;
+  try {
+    msg = JSON.parse(data.toString());
+  } catch (err) {
+    console.error("Invalid Conversation Relay message:", err.message);
+    return;
+  }
+  if (!msg || typeof msg !== "object" || stateFor(ws).closed) return;
 
   switch (msg.type) {
     case "setup":
@@ -381,12 +425,12 @@ function handleMessage(ws, data) {
 
     case "prompt":
       resetSilenceTimer(ws);
-      handlePrompt(ws, msg);
+      if (msg.last !== false && typeof msg.voicePrompt === "string") handlePrompt(ws, msg);
       break;
 
     case "interrupt":
       resetSilenceTimer(ws);
-      handleInterrupt(msg);
+      handleInterrupt(ws, msg);
       break;
 
     case "dtmf":
@@ -407,6 +451,11 @@ const server = http.createServer(async (req, res) => {
   <Connect>
     <ConversationRelay
       url="wss://\${req.headers.host}/ws"
+      voice="21m00Tcm4TlvDq8ikWAM"
+      ttsProvider="ElevenLabs"
+      language="en-US"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
       welcomeGreeting="Hello! How can I help you today?"
       dtmfDetection="true"
       interruptible="any"
@@ -453,7 +502,11 @@ wss.on("connection", (ws) => {
   ws.on("message", (data) => handleMessage(ws, data));
 
   ws.on("close", () => {
-    clearTimeout(silenceTimer);
+    const state = stateFor(ws);
+    state.closed = true;
+    state.activeStream?.abort();
+    clearTimeout(state.silenceTimer);
+    clearTimeout(state.endTimer);
     console.log("Call ended, timers cleared.");
   });
 

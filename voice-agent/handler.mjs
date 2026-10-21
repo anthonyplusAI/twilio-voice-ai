@@ -13,8 +13,11 @@ export function handleConversationRelayConnection(ws) {
   let callSid = "";
   let config = {};
   let activeTools = toolDefinitions;
-  let handoffAllowed = true;
-  let isProcessing = false;
+  let handoffAllowed = false;
+  let handoffRequested = false;
+  let handoffDestinationReady = false;
+  let activeResponse = null;
+  let relayEnded = false;
   let silenceTimer = null;
   let silenceCount = 0;
   let callStartTime = null;
@@ -27,10 +30,11 @@ export function handleConversationRelayConnection(ws) {
   }
 
   function startSilenceTimer() {
+    if (relayEnded) return;
     clearSilenceTimer();
     const timeout = silenceCount === 0 ? SILENCE_FIRST_MS : SILENCE_SECOND_MS;
     silenceTimer = setTimeout(async () => {
-      if (isProcessing) return;
+      if (activeResponse || relayEnded) return;
       silenceCount++;
       if (silenceCount >= 3) {
         console.log(`[voice-agent] [${callSid}] Ending call after prolonged silence`);
@@ -50,6 +54,54 @@ export function handleConversationRelayConnection(ws) {
     }, timeout);
   }
 
+  function cancelActiveResponse() {
+    const response = activeResponse;
+    if (!response) return false;
+    activeResponse = null;
+    response.controller.abort();
+    // Tool messages from an unfinished turn must not leak into the next request.
+    conversationHistory.splice(response.historyStart);
+    return true;
+  }
+
+  function startResponse(userPrompt) {
+    if (relayEnded) return;
+    cancelActiveResponse();
+    conversationHistory.push({ role: "user", content: userPrompt });
+    const response = {
+      controller: new AbortController(),
+      historyStart: conversationHistory.length,
+    };
+    activeResponse = response;
+    const isCurrent = () => activeResponse === response &&
+      !response.controller.signal.aborted && !relayEnded;
+
+    void (async () => {
+      try {
+        const result = await streamLLMResponse(
+          openai, conversationHistory, ws, callSid, activeTools, handoffAllowed,
+          response.controller.signal, isCurrent
+        );
+        if (isCurrent() && result === "handoff") relayEnded = true;
+      } catch (err) {
+        if (!isCurrent() || err.name === "AbortError") return;
+        console.error(`[voice-agent] [${callSid}] LLM error:`, err.message);
+        // An error after a tool call can leave an assistant tool_calls entry
+        // without its matching result. Keep the caller's turn, then record the
+        // fallback they actually heard.
+        conversationHistory.splice(response.historyStart);
+        const fallback = "I'm sorry, I encountered a technical issue. Please try again.";
+        sendToken(ws, fallback, true);
+        conversationHistory.push({ role: "assistant", content: fallback });
+      } finally {
+        if (activeResponse === response) {
+          activeResponse = null;
+          startSilenceTimer();
+        }
+      }
+    })();
+  }
+
   ws.on("message", async (data) => {
     let message;
     try {
@@ -62,13 +114,17 @@ export function handleConversationRelayConnection(ws) {
     switch (message.type) {
       case "setup":
         callSid = message.callSid;
-        handoffAllowed = message.customParameters?.handoffEnabled !== "false";
+        handoffRequested = message.customParameters?.handoffEnabled === "true";
+        handoffDestinationReady = /^\+[1-9]\d{1,14}$/.test(
+          process.env.HANDOFF_PHONE_NUMBER?.trim() || ""
+        );
+        handoffAllowed = handoffRequested && handoffDestinationReady;
         config = {
           agentName: message.customParameters?.agentName,
           personality: message.customParameters?.personality,
           handoffEnabled: handoffAllowed,
         };
-        activeTools = filterTools(message.customParameters?.enabledTools);
+        activeTools = filterTools(message.customParameters?.enabledTools, handoffAllowed);
         conversationHistory = [
           { role: "system", content: buildSystemPrompt(config) },
         ];
@@ -82,27 +138,11 @@ export function handleConversationRelayConnection(ws) {
         break;
 
       case "prompt":
+        if (message.last === false) break;
         silenceCount = 0;
         clearSilenceTimer();
-        if (isProcessing) {
-          console.warn(`[voice-agent] [${callSid}] Dropping overlapping prompt`);
-          break;
-        }
-        isProcessing = true;
         console.log(`[voice-agent] [${callSid}] Caller: ${message.voicePrompt}`);
-        conversationHistory.push({
-          role: "user",
-          content: message.voicePrompt,
-        });
-        try {
-          await streamLLMResponse(openai, conversationHistory, ws, callSid, activeTools, handoffAllowed);
-        } catch (err) {
-          console.error(`[voice-agent] [${callSid}] LLM error:`, err.message);
-          sendToken(ws, "I'm sorry, I encountered a technical issue. Please try again.", true);
-        } finally {
-          isProcessing = false;
-          startSilenceTimer();
-        }
+        startResponse(message.voicePrompt);
         break;
 
       case "interrupt":
@@ -111,43 +151,50 @@ export function handleConversationRelayConnection(ws) {
         console.log(
           `[voice-agent] [${callSid}] Interrupted after: "${message.utteranceUntilInterrupt}"`
         );
-        trimHistoryToInterrupt(
-          conversationHistory,
-          message.utteranceUntilInterrupt
-        );
+        if (cancelActiveResponse()) {
+          if (message.utteranceUntilInterrupt) {
+            conversationHistory.push({
+              role: "assistant", content: message.utteranceUntilInterrupt,
+            });
+          }
+        } else {
+          trimHistoryToInterrupt(conversationHistory, message.utteranceUntilInterrupt);
+        }
+        startSilenceTimer();
         break;
 
       case "dtmf":
         silenceCount = 0;
         clearSilenceTimer();
         console.log(`[voice-agent] [${callSid}] DTMF: ${message.digit}`);
-        if (isProcessing) {
-          console.warn(`[voice-agent] [${callSid}] Dropping DTMF during processing`);
-          break;
-        }
+        cancelActiveResponse();
         if (message.digit === "1") {
-          isProcessing = true;
-          conversationHistory.push({
-            role: "user",
-            content: "I want to check my order status.",
-          });
-          try {
-            await streamLLMResponse(openai, conversationHistory, ws, callSid, activeTools, handoffAllowed);
-          } catch (err) {
-            console.error(`[voice-agent] [${callSid}] LLM error:`, err.message);
-            sendToken(ws, "I'm sorry, I encountered a technical issue. Please try again.", true);
-          } finally {
-            isProcessing = false;
+          startResponse("I want to check my order status.");
+        } else if (message.digit === "2") {
+          if (handoffAllowed) {
+            relayEnded = true;
+            recordEvent(callSid, "handoff_triggered", { callSid, reason: "keypad_request" });
+            sendEnd(ws, JSON.stringify({
+              reasonCode: "live-agent-handoff",
+              reason: "keypad_request",
+            }));
+          } else {
+            const reply = handoffRequested && !handoffDestinationReady
+              ? "Live handoff is unavailable right now. I can keep helping you here."
+              : "I can't transfer calls in this conversation, but I can keep helping you here.";
+            sendToken(ws, reply, true);
+            conversationHistory.push({ role: "assistant", content: reply });
             startSilenceTimer();
           }
-        } else if (message.digit === "2") {
-          sendToken(ws, "Let me transfer you to a representative. Please hold for a moment.", true);
-          startSilenceTimer();
         } else if (message.digit === "0") {
-          sendToken(ws, "Returning to the main menu. Press 1 for order status, 2 for a representative, or just tell me what you need.", true);
+          const reply = "Returning to the main menu. Press 1 for order status, 2 for a representative, or just tell me what you need.";
+          sendToken(ws, reply, true);
+          conversationHistory.push({ role: "assistant", content: reply });
           startSilenceTimer();
         } else {
-          sendToken(ws, "I didn't recognize that option. Press 1 for order status, or 2 for a representative.", true);
+          const reply = "I didn't recognize that option. Press 1 for order status, or 2 for a representative.";
+          sendToken(ws, reply, true);
+          conversationHistory.push({ role: "assistant", content: reply });
           startSilenceTimer();
         }
         break;
@@ -166,6 +213,8 @@ export function handleConversationRelayConnection(ws) {
   });
 
   ws.on("close", () => {
+    relayEnded = true;
+    cancelActiveResponse();
     const durationMs = callStartTime ? Date.now() - callStartTime : 0;
     console.log(`[voice-agent] Call ${callSid} disconnected`);
     recordEvent(callSid, "call_ended", { callSid, durationMs });
@@ -175,10 +224,11 @@ export function handleConversationRelayConnection(ws) {
 
 const LANG_MARKER_RE = /\[LANG:([a-z]{2}-[A-Z]{2})\]/g;
 
-async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefinitions, handoffAllowed = true) {
+async function streamLLMResponse(openai, history, ws, callSid, tools, handoffAllowed, signal, isCurrent) {
   let iterations = 0;
 
   while (iterations < MAX_TOOL_ITERATIONS) {
+    if (!isCurrent()) return;
     iterations++;
 
     const requestBody = {
@@ -190,7 +240,8 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
       requestBody.tools = tools;
     }
 
-    const stream = await openai.chat.completions.create(requestBody);
+    const stream = await openai.chat.completions.create(requestBody, { signal });
+    if (!isCurrent()) return;
 
     let fullResponse = "";
     let currentToolCalls = [];
@@ -198,6 +249,7 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
     let pendingSend = "";
 
     for await (const chunk of stream) {
+      if (!isCurrent()) return;
       const delta = chunk.choices[0]?.delta;
       if (!delta) continue;
 
@@ -241,6 +293,7 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
         pendingSend = "";
       }
     }
+    if (!isCurrent()) return;
 
     // Flush any remaining buffered text (e.g. partial marker that never completed)
     if (pendingSend) {
@@ -286,19 +339,12 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
         console.log(`[voice-agent] [${callSid}] Handoff triggered: ${args.reason || ""}`);
         recordEvent(callSid, "handoff_triggered", { callSid, reason: args.reason });
 
-        const cleanFarewell = fullResponse.replace(LANG_MARKER_RE, "");
-        if (cleanFarewell.trim()) {
-          history.push({ role: "assistant", content: cleanFarewell });
-        }
-
-        setTimeout(() => {
-          sendEnd(ws, JSON.stringify({
-            reasonCode: "live-agent-handoff",
-            reason: args.reason || "caller_requested_human",
-            summary: args.summary || "",
-          }));
-        }, 1500);
-        return;
+        sendEnd(ws, JSON.stringify({
+          reasonCode: "live-agent-handoff",
+          reason: args.reason || "caller_requested_human",
+          summary: args.summary || "",
+        }));
+        return "handoff";
       }
 
       history.push({
@@ -339,7 +385,7 @@ async function streamLLMResponse(openai, history, ws, callSid, tools = toolDefin
     break;
   }
 
-  if (iterations >= MAX_TOOL_ITERATIONS) {
+  if (isCurrent() && iterations >= MAX_TOOL_ITERATIONS) {
     console.warn(`[voice-agent] [${callSid}] Hit tool iteration limit`);
     sendToken(ws, "I apologize, I'm having trouble completing that request.", true);
   }
@@ -368,28 +414,30 @@ function sendLanguage(ws, langCode) {
   }));
 }
 
-function filterTools(enabledParam) {
-  if (enabledParam === undefined || enabledParam === null) {
-    return toolDefinitions;
+export function filterTools(enabledParam, handoffEnabled = false) {
+  const allow = enabledParam === undefined || enabledParam === null
+    ? new Set(toolDefinitions.map((tool) => tool.function.name))
+    : new Set(
+        String(enabledParam)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      );
+  if (handoffEnabled) {
+    allow.add(HANDOFF_TOOL_NAME);
+  } else {
+    allow.delete(HANDOFF_TOOL_NAME);
   }
-  const allow = new Set(
-    String(enabledParam)
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
   return toolDefinitions.filter((t) => allow.has(t.function.name));
 }
 
 function trimHistoryToInterrupt(history, partialUtterance) {
-  for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i].role === "assistant") {
-      if (history[i].tool_calls) {
-        history.splice(i, history.length - i);
-      } else {
-        history[i] = { role: "assistant", content: partialUtterance };
-      }
-      break;
+  const lastMessage = history.at(-1);
+  if (lastMessage?.role === "assistant" && !lastMessage.tool_calls) {
+    if (partialUtterance) {
+      history[history.length - 1] = { role: "assistant", content: partialUtterance };
+    } else {
+      history.pop();
     }
   }
 }

@@ -5,8 +5,9 @@ import { Phone, PhoneOff, Loader2 } from "lucide-react";
 import { useAudienceMode } from "@/lib/AudienceContext";
 import { useProgressContext } from "@/components/layout/ProgressContext";
 import { useAnalyticsContext } from "@/lib/AnalyticsContext";
+import { validateBuilderTwimlUrl } from "@/lib/call-target";
 
-type CallStatus = "idle" | "calling" | "connected" | "ended" | "error";
+type CallStatus = "idle" | "calling" | "requested" | "error";
 
 const TWIML_URL_KEY = "workshop-builder-twiml-url";
 
@@ -27,19 +28,26 @@ export function CallMe() {
 
   useEffect(() => {
     if (isBuilder) {
-      const stored = localStorage.getItem(TWIML_URL_KEY) || "";
-      queueMicrotask(() => setTwimlUrl(stored));
+      try {
+        const stored = localStorage.getItem(TWIML_URL_KEY) || "";
+        queueMicrotask(() => setTwimlUrl(stored));
+      } catch {
+        // The field still works when browser storage is unavailable.
+      }
     }
   }, [isBuilder]);
 
-  useEffect(() => {
-    if (isBuilder && twimlUrl) {
-      localStorage.setItem(TWIML_URL_KEY, twimlUrl);
-    }
-  }, [isBuilder, twimlUrl]);
+  const builderUrlError = isBuilder && !useBuiltIn
+    ? validateBuilderTwimlUrl(twimlUrl)
+    : null;
 
   async function handleCall() {
     if (!phoneNumber.trim()) return;
+    if (builderUrlError) {
+      setStatus("error");
+      setErrorMessage(builderUrlError);
+      return;
+    }
 
     setStatus("calling");
     setErrorMessage("");
@@ -49,6 +57,7 @@ export function CallMe() {
 
     const body: Record<string, unknown> = {
       phoneNumber: phoneNumber.trim(),
+      target: isBuilder && !useBuiltIn ? "builder" : "built-in",
       sessionId: sessionId.current || undefined,
       agentConfig: {
         agentName: progress.workshopState.agentName || undefined,
@@ -57,13 +66,13 @@ export function CallMe() {
         language: progress.workshopState.language || undefined,
         personality: progress.workshopState.personality || undefined,
         welcomeGreeting: progress.workshopState.welcomeGreeting || undefined,
-        enabledTools: progress.workshopState.enabledTools || undefined,
+        enabledTools: progress.workshopState.enabledTools,
         handoffEnabled: progress.workshopState.handoffEnabled || undefined,
       },
     };
 
-    if (isBuilder && twimlUrl && !useBuiltIn) {
-      body.twimlUrl = twimlUrl;
+    if (isBuilder && !useBuiltIn) {
+      body.twimlUrl = twimlUrl.trim();
     }
 
     try {
@@ -82,7 +91,7 @@ export function CallMe() {
       }
 
       setCallSid(data.callSid);
-      setStatus("connected");
+      setStatus("requested");
       incrementCalls();
 
       setTimeout(() => setStatus("idle"), 30000);
@@ -94,7 +103,7 @@ export function CallMe() {
     }
   }
 
-  const isDisabled = status === "calling" || !phoneNumber.trim();
+  const isDisabled = status === "calling" || !phoneNumber.trim() || Boolean(builderUrlError);
 
   return (
     <div className="rounded-xl border border-navy-border bg-surface-1 p-5 mb-6">
@@ -135,11 +144,30 @@ export function CallMe() {
               id="twiml-url"
               type="url"
               value={twimlUrl}
-              onChange={(e) => setTwimlUrl(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTwimlUrl(value);
+                try {
+                  localStorage.setItem(TWIML_URL_KEY, value);
+                } catch {
+                  // A blocked storage write should not block calling.
+                }
+              }}
               placeholder="https://your-tunnel.trycloudflare.com/twiml"
               disabled={useBuiltIn}
+              aria-describedby={useBuiltIn ? undefined : "twiml-url-help"}
               className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-navy-border text-sm text-text-primary placeholder:text-text-muted/50 focus:outline-none focus:ring-1 focus:ring-twilio-red/50 disabled:opacity-50"
             />
+            {!useBuiltIn && (
+              <p
+                id="twiml-url-help"
+                className={`mt-1 text-xs ${twimlUrl.trim() && builderUrlError ? "text-error" : "text-text-muted"}`}
+              >
+                {twimlUrl.trim() && builderUrlError
+                  ? builderUrlError
+                  : "Run tunnel-url in your Codespace and paste the full URL. Your next call will use your saved server code."}
+              </p>
+            )}
             <label className="flex items-center gap-2 mt-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -148,9 +176,14 @@ export function CallMe() {
                 className="rounded border-navy-border"
               />
               <span className="text-xs text-text-muted">
-                Use the built-in server instead
+                Use the hosted reference agent instead
               </span>
             </label>
+            {useBuiltIn && (
+              <p className="mt-1 text-xs text-text-muted">
+                This call uses the workshop agent. Edits in your Codespace will not affect it.
+              </p>
+            )}
           </div>
         )}
 
@@ -176,11 +209,11 @@ export function CallMe() {
           )}
         </button>
 
-        {status === "connected" && (
+        {status === "requested" && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-success/10 border border-success/20">
             <Phone className="w-4 h-4 text-success animate-pulse" />
             <span className="text-xs text-success">
-              Your phone is ringing — pick up and say hi
+              Call requested — your phone should ring shortly. Pick up and say hi.
             </span>
           </div>
         )}

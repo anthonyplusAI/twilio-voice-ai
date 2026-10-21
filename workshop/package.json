@@ -4,11 +4,13 @@
   "private": true,
   "description": "Your ConversationRelay voice AI agent — built step by step during the workshop.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.0",
-    "openai": "^6.34.0",
-    "ws": "^8.20.0"
+    "dotenv": "16.6.1",
+    "openai": "6.34.0",
+    "twilio": "5.13.1",
+    "ws": "8.20.0"
   }
 }

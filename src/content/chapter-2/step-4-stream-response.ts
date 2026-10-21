@@ -32,14 +32,14 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Install the OpenAI SDK:",
+        "The Codespace installed the OpenAI SDK from `workshop/package.json`. If you are building locally or installation was interrupted, run this from `workshop/`:",
     },
 
     {
       type: "code",
       audience: "builder",
       language: "bash",
-      code: "npm install openai",
+      code: "npm ci",
     },
 
     {

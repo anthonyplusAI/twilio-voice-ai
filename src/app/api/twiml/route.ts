@@ -4,7 +4,9 @@ export async function POST(request: NextRequest) {
   const url = new URL(request.url);
   const rawWsUrl = url.searchParams.get("wsUrl");
   const wsUrl = rawWsUrl && isValidWsUrl(rawWsUrl) ? rawWsUrl : getDefaultWsUrl(request);
-  const voice = url.searchParams.get("voice") || "UgBBYS2sOqTuMpoF3BR0";
+  // When no voice is selected, ConversationRelay chooses a default for the
+  // requested language. A fixed English voice can break a Spanish-first call.
+  const voice = url.searchParams.get("voice");
   const ttsProvider = url.searchParams.get("ttsProvider") || "ElevenLabs";
   const language = url.searchParams.get("language") || "en-US";
   const transcriptionProvider =
@@ -14,14 +16,14 @@ export async function POST(request: NextRequest) {
     "Hello! I'm your AI assistant. How can I help you today?";
   const agentName = url.searchParams.get("agentName") || "";
   const personality = url.searchParams.get("personality") || "";
-  const enabledTools = url.searchParams.get("enabledTools") || "";
-  const handoffEnabled = url.searchParams.get("handoffEnabled") || "";
+  const enabledTools = url.searchParams.get("enabledTools");
+  const handoffEnabled = url.searchParams.get("handoffEnabled") === "true";
 
   const paramElements = [
     agentName && `<Parameter name="agentName" value="${escapeXml(agentName)}"/>`,
     personality && `<Parameter name="personality" value="${escapeXml(personality)}"/>`,
-    enabledTools && `<Parameter name="enabledTools" value="${escapeXml(enabledTools)}"/>`,
-    handoffEnabled && `<Parameter name="handoffEnabled" value="${escapeXml(handoffEnabled)}"/>`,
+    enabledTools !== null && `<Parameter name="enabledTools" value="${escapeXml(enabledTools)}"/>`,
+    `<Parameter name="handoffEnabled" value="${handoffEnabled}"/>`,
   ]
     .filter(Boolean)
     .join("\n      ");
@@ -35,12 +37,13 @@ export async function POST(request: NextRequest) {
   <Connect action="${escapeXml(actionUrl)}" method="POST">
     <ConversationRelay
       url="${escapeXml(wsUrl)}"
-      voice="${escapeXml(voice)}"
+      ${voice ? `voice="${escapeXml(voice)}"` : ""}
       ttsProvider="${escapeXml(ttsProvider)}"
       language="${escapeXml(language)}"
       transcriptionProvider="${escapeXml(transcriptionProvider)}"
       welcomeGreeting="${escapeXml(welcomeGreeting)}"
       interruptible="any"
+      reportInputDuringAgentSpeech="any"
       interruptSensitivity="low"
       dtmfDetection="true"
     >

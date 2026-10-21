@@ -3,11 +3,11 @@ export function buildSystemPrompt(config = {}) {
   const personality =
     config.personality ||
     "friendly, helpful, and conversational. You speak naturally and concisely.";
-  const handoffEnabled = config.handoffEnabled !== false;
+  const handoffEnabled = config.handoffEnabled === true;
 
   const handoffBlock = handoffEnabled
     ? `Handoff to a human:
-- If the caller asks to speak with a real person, a manager, or a human agent, say a brief farewell like "Let me connect you with someone who can help. One moment please." and then call the transfer_to_agent tool with a reason code and a short summary of the conversation.
+- If the caller asks to speak with a real person, a manager, or a human agent, call the transfer_to_agent tool immediately with a reason code and a short summary of the conversation. Do not announce the transfer in your response; the call transfer will announce it after the AI session ends.
 - Only call transfer_to_agent when the caller explicitly asks for a human. Never use it on your own.`
     : `Handoff to a human (disabled):
 - Handoff to a live agent is turned off for this call.

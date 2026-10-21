@@ -26,7 +26,7 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "**1.** `MY_PHONE_NUMBER` is set in `workshop/.env` (the Twilio and OpenAI keys are pre-configured in your Codespace).",
+        "**1.** `OPENAI_API_KEY` is set in `workshop/.env`. Add upgraded Twilio credentials and `MY_PHONE_NUMBER` only if you plan to call from your Codespace's `/call` route. The workshop site's Call Me button uses the site's upgraded Twilio account to reach your server.",
     },
 
     {
@@ -40,13 +40,13 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "**3.** Start the server:",
+        "**3.** From `workshop/`, start the development server. It restarts when you save changes to `server.js` or imported JavaScript files. If you change `.env`, stop it with Ctrl+C and start it again:",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ node server.js
+      commands: `$ npm run dev
 🚀 Server listening on port 8080`,
     },
 
@@ -76,6 +76,19 @@ export default {
 
     {
       type: "prose",
+      audience: "builder",
+      content:
+        "Or test your own `/call` route from the terminal. Send the request through the public tunnel so the server gives Twilio a reachable `/twiml` callback URL; a `localhost` request would give Twilio a `https://localhost` callback:",
+    },
+
+    {
+      type: "terminal",
+      audience: "builder",
+      commands: `$ curl -X POST "$(tunnel-url call)"`,
+    },
+
+    {
+      type: "prose",
       content:
         "Your phone should ring within a few seconds. Pick up and you should hear: \"Hello! How can I help you today?\" Try asking it a question or telling it a joke.",
     },
@@ -97,7 +110,7 @@ export default {
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ node server.js
+      commands: `$ npm run dev
 🚀 Server listening on port 8080
 📞 Call initiated: CA1234567890abcdef1234567890abcdef
 📞 New WebSocket connection
@@ -120,12 +133,12 @@ export default {
       question: "Did you hear the AI respond to your voice?",
       troubleshooting: [
         "Watch your terminal while you call -- you should see logs for `📞 New WebSocket connection`, `✅ Call started`, and `🗣️ Caller: ...`",
-        "No WebSocket connection logged? Make sure your server is running on port 8080 (`node server.js`) and `tunnel-url` returns a `trycloudflare.com` URL",
+        "No WebSocket connection logged? Make sure your server is running on port 8080 (`npm run dev`) and `tunnel-url` returns a `trycloudflare.com` URL",
         "Call connects but greeting plays then silence? The server probably isn't receiving `prompt` messages -- check that the terminal shows `🗣️ Caller: ...` logs and the WebSocket stayed open",
         "Hearing the fallback apology message? That's the OpenAI catch block -- check `OPENAI_API_KEY` and the terminal for LLM errors",
-        "Call never rings? Make sure the URL ends in `/twiml`, your server logs show `POST /twiml` when you click Call Me, and the tunnel URL still resolves -- restart it with `bash .devcontainer/start-tunnel.sh` if needed",
+        "Call never rings? Make sure the URL ends in `/twiml`, your server logs show `POST /twiml` when you click Call Me, and the tunnel URL still resolves -- run `tunnel-url` to restart a stopped tunnel if needed",
         "Number format must be E.164 (`+15551234567`) in both `MY_PHONE_NUMBER` and the Call Me input",
-        "Trial accounts can only call verified numbers -- verify `MY_PHONE_NUMBER` in the Twilio Console if you're on a trial",
+        "If the call connects but ConversationRelay does not start, confirm with the facilitator that the site's Twilio account is upgraded. Twilio trials block ConversationRelay even when your phone number is verified. Your Codespace's own `/call` route also needs an upgraded account",
       ],
     },
 

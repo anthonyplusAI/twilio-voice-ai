@@ -16,13 +16,13 @@ export default {
       type: "prose",
       audience: "builder",
       content:
-        "Time to put the agent's reflexes to the test. Make sure the server is running and `tunnel-url` still prints your `trycloudflare.com` URL.",
+        "Time to put the agent's reflexes to the test. Keep `npm run dev` running (start it if needed) and check that `tunnel-url` prints your current `trycloudflare.com` URL. Saved JavaScript changes restart the server automatically.",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ node server.js
+      commands: `$ npm run dev
 Server listening on port 8080`,
     },
 
@@ -38,13 +38,13 @@ Server listening on port 8080`,
       type: "prose",
       audience: "builder",
       content:
-        "Or trigger your own `/call` endpoint from the terminal. Since the server is listening on port 8080 inside the Codespace, you can hit it on `localhost`:",
+        "Or trigger your own `/call` endpoint from the terminal. Send the request through the public tunnel so the server gives Twilio a reachable callback URL:",
     },
 
     {
       type: "terminal",
       audience: "builder",
-      commands: `$ curl -X POST http://localhost:8080/call`,
+      commands: `$ curl -X POST "$(tunnel-url call)"`,
     },
 
     {
@@ -156,7 +156,7 @@ Server listening on port 8080`,
         "No response to keypad presses? Confirm `dtmfDetection=\"true\"`, `interruptible=\"any\"`, and `reportInputDuringAgentSpeech=\"any\"` are all on your `<ConversationRelay>`, and that your server handles the `dtmf` WebSocket message",
         "Silence didn't trigger a prompt? Make sure the silence timer starts after setup and resets on every prompt/interrupt/dtmf message",
         "Didn't switch to Spanish? Language switching is optional — check that the LLM produced a [LANG:es-ES] marker and your server sent a language WebSocket message",
-        "Nothing happening at all? Make sure your server is running (`node server.js`) and `tunnel-url` returns a `trycloudflare.com` URL",
+        "Nothing happening at all? Make sure your server is running (`npm run dev`) and `tunnel-url` returns a `trycloudflare.com` URL",
       ],
     },
 

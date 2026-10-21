@@ -52,7 +52,7 @@ export default {
                     icon: "/images/icons/globe.svg",
                     title: "Open your Codespace",
                     description:
-                        "Click this link in a new tab: [codespaces.new/anthonyjdella/twilio-voice-ai](https://codespaces.new/anthonyjdella/twilio-voice-ai)",
+                        "Click this link in a new tab: [codespaces.new/anthonyplusAI/twilio-voice-ai](https://codespaces.new/anthonyplusAI/twilio-voice-ai)",
                 },
                 {
                     icon: "/images/icons/settings.svg",
@@ -68,7 +68,7 @@ export default {
             variant: "info",
             audience: "builder",
             content:
-                "**All you need is a free GitHub account.** If you do not have one, create it at [github.com](https://github.com).",
+                "**A free GitHub account opens your Codespace.** If you do not have one, create it at [github.com](https://github.com). You will add an OpenAI API key in a later step. You only need your own upgraded Twilio credentials if you place calls from your Codespace's `/call` route; the workshop site's Call Me button uses the site's account.",
         },
 
         { type: "page-break" },

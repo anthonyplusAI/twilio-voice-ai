@@ -29,14 +29,14 @@ export default {
         {
             type: "prose",
             audience: "builder",
-            content: "Install the Twilio SDK:",
+            content: "The Codespace installed the Twilio SDK from `workshop/package.json`. If you are building locally or installation was interrupted, run this from `workshop/`:",
         },
 
         {
             type: "code",
             audience: "builder",
             language: "bash",
-            code: "npm install twilio",
+            code: "npm ci",
         },
 
         { type: "section", title: "The TwiML Endpoint", audience: "builder" },
@@ -113,7 +113,7 @@ export default {
             audience: "builder",
             variant: "info",
             content:
-                "**Env vars used below.** The code references four environment variables, all pre-loaded in your Codespace:\n\n- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` -- identify your Twilio account when placing outbound calls\n- `TWILIO_PHONE_NUMBER` -- the number calls originate from\n- `MY_PHONE_NUMBER` -- your personal number (you set this during Codespace setup) that Twilio calls during testing\n\nUsing your own Twilio account later? Grab the SID/token from [console.twilio.com](https://console.twilio.com) and a voice-capable number from Phone Numbers.",
+                "**Env vars used below.** The optional Codespace `/call` route references four variables from `workshop/.env`:\n\n- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` -- identify the account placing this outbound call\n- `TWILIO_PHONE_NUMBER` -- the number this call originates from\n- `MY_PHONE_NUMBER` -- the personal number receiving this call\n\nThe website's Call Me button uses the site's Twilio account instead. If you use your own Codespace `/call` route, the account must be upgraded: [trial accounts block ConversationRelay](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). Get the SID/token from [console.twilio.com](https://console.twilio.com) and a voice-capable number from Phone Numbers.",
         },
 
         {
@@ -211,7 +211,7 @@ const server = http.createServer(async (req, res) => {
             type: "prose",
             audience: "builder",
             content:
-                "**url** -- Secure WebSocket address (`wss://`) where Twilio connects to your server. The code uses `req.headers.host` so it works automatically in Codespaces.",
+                "**url** -- Secure WebSocket address (`wss://`) where Twilio connects to your server. The code uses `req.headers.host`, so requests made through your public tunnel produce the tunnel's WebSocket address.",
         },
 
         {

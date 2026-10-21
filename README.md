@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/agithony/twilio-voice-ai/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/agithony/twilio-voice-ai/ci.yml?branch=main&label=CI&color=EF223A" alt="CI status" /></a>
+  <a href="https://github.com/anthonyplusAI/twilio-voice-ai/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/anthonyplusAI/twilio-voice-ai/ci.yml?branch=main&label=CI&color=EF223A" alt="CI status" /></a>
   <img src="https://img.shields.io/badge/Node.js-20-000D25?logo=nodedotjs&logoColor=white" alt="Node.js 20" />
   <img src="https://img.shields.io/badge/Next.js-16.2-000D25?logo=nextdotjs&logoColor=white" alt="Next.js 16.2" />
   <img src="https://img.shields.io/badge/Twilio-ConversationRelay-EF223A?logo=twilio&logoColor=white" alt="Twilio ConversationRelay" />
@@ -76,19 +76,23 @@ Learners choose a mode on their first visit and can switch modes from the worksh
 - A GitHub account with access to [Codespaces](https://github.com/features/codespaces) for the Builder track
 - A phone that can receive the workshop's test call
 - Approximately 90 to 95 minutes
-- Twilio and OpenAI credentials from the facilitator, or your own accounts
+- An OpenAI API key from the facilitator or your own account; upgraded Twilio credentials are also needed if you use your Codespace's `/call` route
 
-Facilitated events may provide shared credentials. The Codespace only prefills credentials that have been configured as repository Codespaces secrets; fill any blank values in `workshop/.env` before making a call.
+Facilitated events may provide credentials at [twil.io/keys](https://twil.io/keys). Public attendees do not receive the repository's Codespaces secrets. Put a working `OPENAI_API_KEY` in `workshop/.env` before calling your Builder agent. Fill the Twilio values only if you also want to place the call from your Codespace's `/call` route.
+
+**Call Me on the workshop site uses the site's Twilio account**, including for Builder calls to your Codespace. Your `workshop/.env` Twilio credentials are used when you call through your Codespace's `/call` route. Both call routes require an **upgraded Twilio account**: [current Twilio trial rules block `<ConversationRelay>`](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), even for a verified recipient.
 
 ### Getting started
 
 1. Open the workshop URL provided by the facilitator.
 2. Choose **Explorer** or **Builder** when prompted.
-3. For Builder mode, select **Code** > **Codespaces** > **Create codespace on main** in this repository.
-4. Add your personal phone number to `MY_PHONE_NUMBER` in `workshop/.env` using [E.164 format](https://www.twilio.com/docs/glossary/what-e164), such as `+15551234567`.
-5. Follow the chapter navigation in the workshop app.
+3. For Builder mode, [create a Codespace for this repository](https://codespaces.new/anthonyplusAI/twilio-voice-ai).
+4. Add an OpenAI API key to `workshop/.env` from the facilitator's [twil.io/keys](https://twil.io/keys) instructions or your own account. The site's Call Me button needs no Twilio credentials in your Codespace. Add upgraded Twilio credentials if you also plan to call from your Codespace's `/call` route.
+5. For the Codespace `/call` route, add your personal phone number to `MY_PHONE_NUMBER` in `workshop/.env` using [E.164 format](https://www.twilio.com/docs/glossary/what-e164), such as `+15551234567`. The site's Call Me button asks for the number in its own form.
+6. To test a live handoff in Chapter 5, set `HANDOFF_PHONE_NUMBER` to a second reachable E.164 phone number, different from the caller's phone.
+7. Follow the chapter navigation in the workshop app. When Chapter 2 asks you to start your server, run `npm run dev` from `workshop/`. It restarts after you save JavaScript changes.
 
-The dev container installs the Builder dependencies, starts a Cloudflare Quick Tunnel for port `8080`, and writes available workshop secrets to `workshop/.env`.
+The dev container installs the Builder dependencies, starts a Cloudflare Quick Tunnel for port `8080`, and creates `workshop/.env` once. Rebuilding the container preserves your edits to that file. Run `tunnel-url` for the public `/twiml` URL or `tunnel-url call` for `/call`.
 
 ### Workshop agenda
 
@@ -117,7 +121,7 @@ These steps run the full companion app and its custom WebSocket server locally.
 ### Local setup
 
 ```bash
-git clone https://github.com/agithony/twilio-voice-ai.git
+git clone https://github.com/anthonyplusAI/twilio-voice-ai.git
 cd twilio-voice-ai
 pnpm install
 cp .env.example .env.local
@@ -139,8 +143,15 @@ Open [http://localhost:8080](http://localhost:8080). Edit `.env.local` before te
 
 The home page launches the workshop. Presenter slides are available at `/slides`, health status at `/health`, and workshop analytics at `/admin`.
 
+### Facilitator preflight for a group event
+
+- Use an upgraded Twilio account for the workshop site's Call Me button; [Twilio trials block `<ConversationRelay>`](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). The [default outbound rate](https://www.twilio.com/docs/voice/api/call-resource) is one call per second, so a burst of attendee clicks can queue.
+- Set the deployed site's Twilio credentials and `OPENAI_API_KEY`. Set `HANDOFF_PHONE_NUMBER` to a second reachable phone if the Explorer handoff exercise should transfer.
+- Test from a fresh public attendee Codespace: fill `workshop/.env`, run `npm run dev`, copy `tunnel-url` into Call Me, change the greeting in `server.js`, save, and call again. Confirm the second call speaks the new greeting.
+- Place an Explorer call using the site's hosted agent and check the selected voice, tool, and handoff settings. If handoff is unavailable, tell attendees before the Chapter 5 exercise.
+
 > [!WARNING]
-> The `/admin` dashboard and destructive `/admin/reset-all` endpoint do not implement application-level authentication. Protect these routes with an upstream access policy before exposing them outside a controlled workshop environment. Analytics use local SQLite storage and reset when the container is replaced.
+> The public `/api/call` endpoint has no application-level authentication or rate limit and can spend the configured Twilio account's call credit. Put workshop access controls or an upstream call quota in place before sharing the site broadly. The `/admin` dashboard and destructive `/admin/reset-all` endpoint also lack application-level authentication. Analytics use local SQLite storage and reset when the container is replaced.
 
 ## Configuration
 
@@ -157,7 +168,7 @@ Copy `.env.example` to `.env.local` for the companion app.
 | `WORKSHOP_SLIDES_EMBED_URL` | No | Published Google Slides embed URL for `/slides` |
 | `PORT` | No | Custom server port; defaults to `8080` |
 
-The attendee-built scaffold under `workshop/` uses its own `.env` and additionally requires `MY_PHONE_NUMBER`.
+The attendee-built scaffold under `workshop/` uses its own `.env`. Set `MY_PHONE_NUMBER` for outbound tests and a second reachable `HANDOFF_PHONE_NUMBER`, different from the caller's phone, to test live transfers.
 
 ## Architecture
 
@@ -166,13 +177,17 @@ The root app uses a custom Node.js HTTP server so Next.js routes, ConversationRe
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'primaryColor':'#EF223A','primaryTextColor':'#FFFFFF','primaryBorderColor':'#000D25','lineColor':'#000D25','fontFamily':'Inter, system-ui, sans-serif'}}}%%
 flowchart LR
-  Learner["Learner browser"] -->|configures agent| App["Next.js workshop app"]
+  Learner["Learner browser"] -->|configures agent and requests a call| App["Next.js workshop app"]
   App -->|POST /api/call| Voice["Twilio Voice"]
   Voice -->|calls| Phone["Learner phone"]
-  Voice -->|requests /api/twiml| App
+  Voice -->|Explorer: /api/twiml| App
+  Voice -->|Builder: /twiml| Tunnel["Codespace Quick Tunnel"]
   Voice <-->|speech and text| Relay["ConversationRelay"]
-  Relay <-->|WSS /ws| Agent["Node.js voice agent"]
+  Relay <-->|Explorer: WSS /ws| Agent["Hosted voice agent"]
+  Relay <-->|Builder: WSS /ws| Tunnel
+  Tunnel --> Builder["Attendee server.js"]
   Agent <-->|streams completions| OpenAI["OpenAI"]
+  Builder <-->|streams completions| OpenAI
   App -->|records events| SQLite["SQLite analytics"]
   SQLite -->|reports| Admin["/admin"]
 ```

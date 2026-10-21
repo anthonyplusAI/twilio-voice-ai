@@ -1,6 +1,7 @@
 "use client";
 
 import { useProgressContext } from "@/components/layout/ProgressContext";
+import { useAudienceMode } from "@/lib/AudienceContext";
 
 const TOOL_SCRIPT: Record<string, { label: string; line: string }> = {
   check_weather: {
@@ -29,23 +30,27 @@ function parseEnabledTools(stored: string | undefined): string[] {
 }
 
 export function DemoScript() {
+  const { isBuilder } = useAudienceMode();
   const { progress } = useProgressContext();
   const enabledTools = parseEnabledTools(progress.workshopState.enabledTools);
   const handoffOn = progress.workshopState.handoffEnabled === "true";
 
   const steps: { title: string; detail: string }[] = [
     {
-      title: "Trigger a call",
-      detail:
-        "Use the Call Me button or your curl command, then let the agent greet you.",
+      title: isBuilder ? "Hear your latest code" : "Hear your configured agent",
+      detail: isBuilder
+        ? "Use Call Me above with your Codespace TwiML URL. Watch the Codespace terminal for the call, then ask about a persona detail you changed in server.js."
+        : "Use Call Me above, then listen for the name, voice, and greeting you selected.",
     },
   ];
 
-  for (const toolId of enabledTools) {
+  // Explorer picks live in this app. Builder capabilities live in their own
+  // server.js, which the hosted app cannot inspect.
+  for (const toolId of isBuilder ? ALL_TOOL_IDS : enabledTools) {
     const tool = TOOL_SCRIPT[toolId];
     steps.push({
       title: `Test the ${tool.label}`,
-      detail: `Say: ${tool.line}`,
+      detail: `Say: ${tool.line}${isBuilder ? " Skip this if you removed the tool from your code." : ""}`,
     });
   }
 
@@ -55,16 +60,25 @@ export function DemoScript() {
       "Ask a long question, then start talking again before the agent finishes. The agent should stop and listen.",
   });
 
-  steps.push({
-    title: "Try the keypad",
-    detail:
-      "Press any number key on your phone mid-call to show DTMF handling.",
-  });
+  if (isBuilder || enabledTools.includes("lookup_order")) {
+    steps.push({
+      title: "Try the keypad",
+      detail: isBuilder
+        ? "Press 1 mid-call to test the order shortcut if you kept the order tool in your code."
+        : "Press 1 on your phone mid-call to test the order shortcut.",
+    });
+  }
 
-  if (handoffOn) {
+  if (isBuilder) {
     steps.push({
       title: "Request a human",
-      detail: 'Say: "I need to speak to a person." The agent should transfer the call.',
+      detail:
+        'If HANDOFF_PHONE_NUMBER is set in your Codespace, say: "I need to speak to a person." The agent should transfer the call.',
+    });
+  } else if (handoffOn) {
+    steps.push({
+      title: "Request a human",
+      detail: 'Say: "I need to speak to a person." The agent should transfer if the workshop has a live handoff number configured; otherwise it should explain that handoff is unavailable.',
     });
   } else {
     steps.push({
@@ -74,7 +88,7 @@ export function DemoScript() {
     });
   }
 
-  const hasAnyTools = enabledTools.length > 0;
+  const hasAnyTools = isBuilder || enabledTools.length > 0;
 
   return (
     <div className="rounded-xl border border-navy-border bg-surface-1 p-5 mb-6">
@@ -100,8 +114,9 @@ export function DemoScript() {
       </div>
 
       <p className="text-sm text-text-muted mb-4">
-        This script matches the tools and handoff setting you picked earlier.
-        Change any of those and the script updates.
+        {isBuilder
+          ? "These prompts test the code running in your Codespace. Use the ones that match the capabilities you kept."
+          : "This script follows your tool and handoff choices. Change a choice and the script updates."}
       </p>
 
       <ol className="space-y-3">

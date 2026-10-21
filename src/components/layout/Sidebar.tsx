@@ -253,62 +253,35 @@ export function Sidebar() {
             </div>
 
             <div className="space-y-2.5 text-sm">
-              {sidebarConfig.fields.map((field) => {
+              {isBuilder ? (
+                <p className="text-xs text-text-muted leading-relaxed">
+                  Your agent settings live in your Codespace code. Save your edits,
+                  then use your tunnel URL in Call Me to hear them on the next call.
+                </p>
+              ) : sidebarConfig.fields.map((field) => {
                 const userVal = progress.workshopState[field.key];
-                // Builders edit server.js directly — this app can't read their file.
-                // When a Builder hasn't explicitly configured something via a widget,
-                // fall back to the defaults baked into the Chapter 3 Step 1 solution
-                // (Ava persona, ElevenLabs, en-US) so the sidebar matches their code.
-                const builderDefaults: Record<string, string> = {
-                  agentName: "Ava",
-                  voiceLabel: "Rachel (ElevenLabs)",
-                  language: "en-US",
-                };
-
-                // Per-field presentation rules. Some keys are synthetic capability
-                // indicators (like _handoff) and some need formatting (enabledTools
-                // is stored as a comma list but shown as a count).
+                // Explorer settings are stored here; Builder settings live in
+                // their Codespace and cannot be read by this app.
                 let val: string | undefined;
                 let isDefault = false;
                 if (field.key === "_handoff") {
-                  // Builder: capability indicator — their Step 4 code enables handoff.
-                  // Explorer: reflects the HandoffToggle. Default OFF so the first test
-                  // call demonstrates the agent politely declining, then the Explorer
-                  // flips it on and calls again to feel the difference.
-                  if (isBuilder) {
-                    val = "Yes";
-                    isDefault = true;
-                  } else {
-                    const toggled = progress.workshopState.handoffEnabled === "true";
-                    val = toggled ? "On" : "Off";
-                    isDefault = !toggled;
-                  }
+                  const toggled = progress.workshopState.handoffEnabled === "true";
+                  val = toggled ? "On" : "Off";
+                  isDefault = !toggled;
                 } else if (field.key === "enabledTools") {
-                  // Explorer: picker writes a comma-separated list of tool IDs.
-                  // Builder: no picker — their server.js owns the tool list, and
-                  // the Step 2 solution ships with exactly two tools.
                   const BUILTIN_TOOL_COUNT = 3;
-                  const BUILDER_DEFAULT_COUNT = 2;
-                  if (isBuilder) {
-                    val = `${BUILDER_DEFAULT_COUNT} / ${BUILDER_DEFAULT_COUNT}`;
-                    isDefault = true;
-                  } else if (userVal !== undefined) {
+                  if (userVal !== undefined) {
                     const count = userVal
                       .split(",")
                       .map((s) => s.trim())
                       .filter(Boolean).length;
                     val = `${count} / ${BUILTIN_TOOL_COUNT}`;
                   } else {
-                    // Explorer hasn't touched the picker yet — all tools are on by default.
+                    // All tools start on until the Explorer changes the picker.
                     val = `${BUILTIN_TOOL_COUNT} / ${BUILTIN_TOOL_COUNT}`;
                     isDefault = true;
                   }
                 } else if (field.key === "voiceLabel") {
-                  // Voice row shows "Name (Provider)" — matches the Builder
-                  // fallback format ("Rachel (ElevenLabs)") and disambiguates
-                  // from the agentName row above (which would be confusing if
-                  // the agent is named something like "Tony" and the voice is
-                  // "Mark").
                   const label = progress.workshopState.voiceLabel?.trim();
                   const provider = progress.workshopState.ttsProvider?.trim();
                   if (label && provider) {
@@ -317,15 +290,11 @@ export function Sidebar() {
                   } else if (label) {
                     val = label;
                     isDefault = false;
-                  } else if (isBuilder) {
-                    val = builderDefaults[field.key];
-                    isDefault = true;
                   } else {
                     val = undefined;
                   }
                 } else {
-                  val = userVal || (isBuilder ? builderDefaults[field.key] : undefined);
-                  isDefault = !userVal && isBuilder && !!val;
+                  val = userVal || undefined;
                 }
 
                 return (
