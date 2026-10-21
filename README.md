@@ -149,13 +149,13 @@ The home page launches the workshop. Presenter slides are available at `/slides`
 
 - Use an upgraded Twilio account for the workshop site's Call Me button; [Twilio trials block `<ConversationRelay>`](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). The [default outbound rate](https://www.twilio.com/docs/voice/api/call-resource) is one call per second, so a burst of attendee clicks can queue.
 - On that account, [accept the Conversation Relay AI/ML features addendum](https://www.twilio.com/docs/voice/conversationrelay/onboarding#configuration-steps-in-the-twilio-console) under Voice settings; account upgrade alone does not enable Conversation Relay.
-- Before deploying the protected site, run [`scripts/configure-call-protection.sh`](./scripts/configure-call-protection.sh) after the Azure infrastructure setup. It creates the shared `CallLimits` table and sets the Container App's call-limit, admin-password, and public-URL secrets.
+- Before deploying the protected site, run [`scripts/configure-call-protection.sh`](./scripts/configure-call-protection.sh) after the Azure infrastructure setup. It creates the shared `CallLimits` and `AnalyticsEvents` tables and sets the Container App's storage, admin-password, and public-URL secrets.
 - Set the deployed site's Twilio credentials and `OPENAI_API_KEY`. Set `HANDOFF_PHONE_NUMBER` to a second reachable phone if the Explorer handoff exercise should transfer.
 - On the workshop-only Twilio account, verify [Voice dialing permissions](https://www.twilio.com/docs/voice/api/dialing-permissions-resources): enable low-risk **United States/Canada** only, and leave high-risk categories off. Twilio lists this combined destination as `US`; this account setting also protects calls made outside the site's Call Me button.
 - Test from a fresh public attendee Codespace: fill `workshop/.env`, run `npm run dev`, copy `tunnel-url` into Call Me, change the greeting in `server.js`, save, and call again after ending the first call. Confirm the second call speaks the new greeting. The site reads the Codespace's current `/twiml` response on every Builder call and passes its supported ConversationRelay settings to Twilio. When the AI requests a handoff, the site checks the Codespace's `/call-ended` response before returning permitted dialing instructions to Twilio. Confirm that the public tunnel returns 404 for `/call` and that `npm run call` from the Codespace's `workshop/` terminal reaches a phone when a separate upgraded attendee Twilio account is configured.
 - Place an Explorer call using the site's hosted agent and check the selected voice, tool, and handoff settings. If handoff is unavailable, tell attendees before the Chapter 5 exercise.
 
-The Call Me endpoint remains public so attendees can use it without signing in. Its per-number limits reduce accidental or repeated use, but there is no site-wide daily cap; monitor Twilio usage during an event. Builder calls accept only the guided ConversationRelay TwiML and a single US or Canadian live handoff. Other TwiML verbs are refused by the shared site's Call Me button; a Codespace's public tunnel also blocks direct `/call` requests. Attendees with their own upgraded account can call through the local `npm run call` command. `/admin` and `/admin/reset-all` require HTTP Basic authentication with the organizer password. Workshop analytics use local SQLite storage and reset when the container is replaced.
+The Call Me endpoint remains public so attendees can use it without signing in. Its per-number limits reduce accidental or repeated use, but there is no site-wide daily cap; monitor Twilio usage during an event. Builder calls accept only the guided ConversationRelay TwiML and a single US or Canadian live handoff. Other TwiML verbs are refused by the shared site's Call Me button; a Codespace's public tunnel also blocks direct `/call` requests. Attendees with their own upgraded account can call through the local `npm run call` command. `/admin` and `/admin/reset-all` require HTTP Basic authentication with the organizer password. Workshop analytics events are stored in the `AnalyticsEvents` Azure Table and survive container replacements; local SQLite is rebuilt from that table for reports. Reset starts a fresh dashboard run while retaining earlier runs for recovery.
 
 ## Configuration
 
@@ -203,7 +203,8 @@ flowchart LR
   Proxy -->|allowed requests| Builder["Attendee server.js"]
   Agent <-->|streams completions| OpenAI["OpenAI"]
   Builder <-->|streams completions| OpenAI
-  App -->|records events| SQLite["SQLite analytics"]
+  App -->|records events| AnalyticsTable["Azure Table AnalyticsEvents"]
+  AnalyticsTable -->|rebuilds query cache| SQLite["SQLite analytics cache"]
   SQLite -->|reports| Admin["/admin"]
 ```
 

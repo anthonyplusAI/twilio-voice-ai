@@ -11,6 +11,7 @@ import { parseBuilderTwiml, renderBuilderTwiml } from "../src/lib/builder-twiml.
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const calls = [];
+const analyticsEvents = [];
 const preflightRequests = [];
 let tunnelFailuresRemaining = 0;
 let twilioFailure = null;
@@ -106,6 +107,11 @@ const { POST } = loadTypeScript("src/app/api/call/route.ts", {
   "@/lib/call-limiter.mjs": { getCallLimiter: () => limiter },
   "@/lib/builder-action-token.mjs": { createBuilderActionToken },
   "@/lib/builder-twiml.mjs": { parseBuilderTwiml, renderBuilderTwiml },
+  "../../../../analytics/db.mjs": {
+    async recordEvent(...args) {
+      analyticsEvents.push(args);
+    },
+  },
 });
 
 function request(body, host = "workshop.example") {
@@ -131,9 +137,9 @@ test("Builder calls give Twilio safe instructions from the current Codespace cod
     to: "+12065550101",
     from: "+12065550100",
     timeLimit: 300,
-    statusCallback: "https://workshop.example/api/call-status?reservationId=reservation-test",
+    statusCallback: "https://workshop.example/api/call-status?reservationId=reservation-test#rc=3&rp=5xx,ct,rt",
     statusCallbackMethod: "POST",
-    statusCallbackEvent: ["completed"],
+    statusCallbackEvent: ["initiated", "completed"],
   });
   assert.match(options.twiml, /url="wss:\/\/example\.trycloudflare\.com\/ws"/);
   assert.match(options.twiml, /action="https:\/\/workshop\.example\/api\/builder-action\?token=/);
@@ -146,6 +152,24 @@ test("Builder calls give Twilio safe instructions from the current Codespace cod
   assert.equal(preflightRequests.at(-1).url, twimlUrl);
   assert.equal(preflightRequests.at(-1).options.method, "POST");
   assert.equal(preflightRequests.at(-1).options.redirect, "error");
+});
+
+test("Twilio receives a signed retryable call analytics callback for a workshop session", async () => {
+  const response = await POST(request({
+    phoneNumber: "+12065550101",
+    target: "built-in",
+    sessionId: "session-test",
+  }));
+  assert.equal(response.status, 200);
+  const options = calls.at(-1);
+  const callback = new URL(options.statusCallback);
+  assert.equal(callback.searchParams.get("reservationId"), "reservation-test");
+  assert.equal(callback.searchParams.get("sessionId"), "session-test");
+  assert.equal(callback.hash, "#rc=3&rp=5xx,ct,rt");
+  assert.deepEqual(JSON.parse(JSON.stringify(options.statusCallbackEvent)), ["initiated", "completed"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(analyticsEvents.at(-1))), [
+    "session-test", "call_initiated", { callSid: "CA-test" }, "call-init:CA-test",
+  ]);
 });
 
 test("A stale Codespace tunnel is rejected before creating a Twilio call", async () => {

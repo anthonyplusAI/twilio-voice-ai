@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { MessageSquarePlus, X, Check, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -17,6 +17,7 @@ export function FeedbackButton() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const submission = useRef<{ id: string; payload: string } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -28,6 +29,7 @@ export function FeedbackButton() {
   }, [open]);
 
   function resetForm() {
+    submission.current = null;
     setNps(null);
     setComment("");
     setName("");
@@ -46,16 +48,25 @@ export function FeedbackButton() {
     setStatus("submitting");
     setErrorMessage("");
 
+    const feedback = {
+      nps,
+      comment,
+      name,
+      email,
+      sessionId: sessionId.current || undefined,
+    };
+    const payload = JSON.stringify(feedback);
+    if (submission.current?.payload !== payload) {
+      submission.current = { id: crypto.randomUUID(), payload };
+    }
+
     try {
       const res = await fetch("/api/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          nps,
-          comment,
-          name,
-          email,
-          sessionId: sessionId.current || undefined,
+          ...feedback,
+          id: submission.current.id,
         }),
       });
       if (!res.ok) {

@@ -5,6 +5,7 @@ import { validateBuilderTwimlUrl, type CallTarget } from "@/lib/call-target";
 import { getCallLimiter } from "@/lib/call-limiter.mjs";
 import { createBuilderActionToken } from "@/lib/builder-action-token.mjs";
 import { parseBuilderTwiml, renderBuilderTwiml } from "@/lib/builder-twiml.mjs";
+import { recordEvent } from "../../../../analytics/db.mjs";
 
 const MAX_CALL_REQUEST_BYTES = 32 * 1024;
 const MAX_CONCURRENT_BUILDER_PREFLIGHTS = 64;
@@ -121,6 +122,11 @@ export async function POST(request: NextRequest) {
       handoffEnabled?: string;
     };
   };
+
+  if (body.sessionId !== undefined &&
+      (typeof body.sessionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(body.sessionId))) {
+    return Response.json({ error: "Invalid workshop session ID" }, { status: 400 });
+  }
 
   const phoneNumber = typeof body.phoneNumber === "string"
     ? body.phoneNumber.trim()
@@ -277,6 +283,10 @@ export async function POST(request: NextRequest) {
 
   const statusCallback = new URL("/api/call-status", siteOrigin);
   statusCallback.searchParams.set("reservationId", reservationId);
+  if (body.sessionId) statusCallback.searchParams.set("sessionId", body.sessionId);
+  // Twilio retries temporary 5xx and network failures on this signed webhook.
+  // URL fragments configure Twilio delivery but are excluded from signatures.
+  statusCallback.hash = "rc=3&rp=5xx,ct,rt";
 
   let callInstructions: { twiml: string } | { url: string; method: "POST" };
   try {
@@ -309,7 +319,7 @@ export async function POST(request: NextRequest) {
       timeLimit: 300,
       statusCallback: statusCallback.toString(),
       statusCallbackMethod: "POST",
-      statusCallbackEvent: ["completed"],
+      statusCallbackEvent: ["initiated", "completed"],
     });
 
     try {
@@ -321,16 +331,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.sessionId) {
-      try {
-        const { recordEvent } = await import("../../../../analytics/db.mjs");
-        recordEvent(body.sessionId, "call_initiated", {
-          callSid: call.sid,
-          agentName: body.agentConfig?.agentName,
-          voice: body.agentConfig?.voice,
-          language: body.agentConfig?.language,
-          ttsProvider: body.agentConfig?.ttsProvider,
-        });
-      } catch { /* analytics best-effort */ }
+      // Count a successful call immediately. The signed Twilio callback uses
+      // the same ID and retries the write if this best-effort attempt fails.
+      void recordEvent(body.sessionId, "call_initiated", { callSid: call.sid }, `call-init:${call.sid}`)
+        .catch((error) => console.error("[api/call] Failed to record call analytics:", error));
     }
 
     return Response.json({ callSid: call.sid, status: call.status });

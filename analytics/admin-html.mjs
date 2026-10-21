@@ -1,6 +1,6 @@
 export function renderAdminPage(data) {
   const { range, overview, funnel, chapters, audience, calls, agentConfig, pacing, timePerChapter, hourlyActivity, skipAhead, engagement, shares, feedback, recent } = data;
-  const rangeLabel = range === 'today' ? 'Today' : 'All time';
+  const rangeLabel = range === 'today' ? 'Today' : 'Current run';
   const completionRate = overview.totalSessions > 0
     ? Math.round((overview.totalCompleted / overview.totalSessions) * 100) : 0;
   const callRate = overview.totalSessions > 0
@@ -138,7 +138,7 @@ tbody tr:hover td { background: rgba(255,255,255,0.02); }
     <h1>Workshop Analytics</h1>
     <div style="display:inline-flex;border:1px solid var(--border-subtle);border-radius:8px;overflow:hidden">
       <a href="/admin?range=today" class="btn ${range === 'today' ? 'btn-red' : 'btn-outline'}" style="border-radius:0;border:0;font-size:12px;padding:6px 12px" title="Show only events from today (server time)">Today</a>
-      <a href="/admin?range=all" class="btn ${range === 'all' ? 'btn-red' : 'btn-outline'}" style="border-radius:0;border:0;font-size:12px;padding:6px 12px" title="Show all-time totals across every workshop run">All time</a>
+      <a href="/admin?range=all" class="btn ${range === 'all' ? 'btn-red' : 'btn-outline'}" style="border-radius:0;border:0;font-size:12px;padding:6px 12px" title="Show all events in the current analytics run">Current run</a>
     </div>
   </div>
   <div style="display:flex;gap:8px;align-items:center">
@@ -148,7 +148,7 @@ tbody tr:hover td { background: rgba(255,255,255,0.02); }
     </div>
     <a href="/" class="btn btn-outline" title="Back to workshop home">Home</a>
     <button id="resetProgressBtn" class="btn btn-outline" title="Clears this browser's workshop progress (localStorage). Does not affect other attendees or server analytics.">Reset My Progress</button>
-    <button id="resetAllBtn" class="btn btn-outline" style="border-color:rgba(239,34,58,0.5);color:#ff8a9a" title="DESTRUCTIVE: wipes every analytics event from the server. Use this before a workshop to start with a clean dashboard.">Reset All Sessions</button>
+    <button id="resetAllBtn" class="btn btn-outline" style="border-color:rgba(239,34,58,0.5);color:#ff8a9a" title="Starts a fresh analytics run. Previous events stay archived in Azure Table storage for recovery.">Start New Run</button>
     <a href="/slides" class="btn btn-outline" title="Open the workshop slide deck. Visiting /admin also enables the presenter-only backslash (\\) shortcut for toggling slides ⇄ workshop anywhere in the app.">View Slides</a>
     <a href="/admin/report?range=${range}" class="btn btn-red">Download PDF Report</a>
   </div>
@@ -498,15 +498,15 @@ document.getElementById("resetProgressBtn").addEventListener("click", function (
   }
 });
 
-// Destructive server-side wipe. Double-confirmed because it deletes every
-// attendee's analytics, not just this browser's. Refreshes the page after a
-// successful wipe so the counters snap to zero without waiting for the 30s
+// Start a new analytics generation. Double-confirmed because it hides every
+// attendee's session from the current dashboard. Refreshes the page after a
+// successful reset so the counters snap to zero without waiting for the 30s
 // auto-refresh.
 document.getElementById("resetAllBtn").addEventListener("click", function () {
-  var first = window.confirm("Wipe ALL analytics events from the server? This deletes every attendee's session data and cannot be undone. Use this only for testing before a workshop.");
+  var first = window.confirm("Start a fresh analytics run? Previous events remain archived for recovery. Do this while the prior workshop is idle; open tabs and returning attendees may still send older queued activity. Ask attendees to reload after a reset.");
   if (!first) return;
-  var second = window.prompt("Type DELETE to confirm wiping all sessions.");
-  if (second !== "DELETE") {
+  var second = window.prompt("Type RESET to start a new analytics run.");
+  if (second !== "RESET") {
     window.alert("Cancelled (confirmation phrase did not match).");
     return;
   }
@@ -514,14 +514,14 @@ document.getElementById("resetAllBtn").addEventListener("click", function () {
     .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
     .then(function (result) {
       if (result.ok && result.body && result.body.ok) {
-        window.alert("Wiped " + result.body.removed + " event" + (result.body.removed === 1 ? "" : "s") + " from the server.");
+        window.alert("Started a new analytics run. " + result.body.removed + " event" + (result.body.removed === 1 ? "" : "s") + " hidden from this dashboard.");
         location.reload();
       } else {
-        window.alert("Reset failed: " + (result.body && result.body.error ? result.body.error : "unknown error"));
+        window.alert("Reset status could not be confirmed. Refresh the dashboard before trying again. " + (result.body && result.body.error ? result.body.error : "Unknown error"));
       }
     })
     .catch(function (err) {
-      window.alert("Reset failed: " + (err && err.message ? err.message : err));
+      window.alert("Reset status could not be confirmed. Refresh the dashboard before trying again. " + (err && err.message ? err.message : err));
     });
 });
 </script>

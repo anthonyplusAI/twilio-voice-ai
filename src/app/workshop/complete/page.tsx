@@ -8,7 +8,7 @@ import confetti from "canvas-confetti";
 import workshopConfig from "@/workshop.config";
 import { useProgressContext } from "@/components/layout/ProgressContext";
 import { ConfirmModal } from "@/components/layout/ConfirmModal";
-import { useAnalytics } from "@/hooks/useAnalytics";
+import { useAnalyticsContext } from "@/lib/AnalyticsContext";
 import { countValidCompleted, totalStepCount } from "@/lib/progress-math";
 import { RESET_COPY } from "@/lib/workshop-copy";
 import { Home, RotateCcw } from "lucide-react";
@@ -40,7 +40,7 @@ export default function WorkshopComplete() {
   const { progress, loaded, resetProgress } = useProgressContext();
   const [showReset, setShowReset] = useState(false);
   const router = useRouter();
-  const { emit } = useAnalytics();
+  const { emit } = useAnalyticsContext();
 
   const totalSteps = useMemo(
     () => totalStepCount(workshopConfig.chapters),

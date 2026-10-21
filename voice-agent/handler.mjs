@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { parsePhoneNumberFromString } from "libphonenumber-js/max";
 import { buildSystemPrompt, WORKSHOP_LANGUAGE_CODES } from "./system-prompt.mjs";
 import { getCallMessage } from "./locale-messages.mjs";
@@ -8,6 +10,24 @@ import { recordEvent } from "../analytics/db.mjs";
 const MAX_TOOL_ITERATIONS = 5;
 const SILENCE_FIRST_MS = 12000;
 const SILENCE_SECOND_MS = 10000;
+
+function recordVoiceEvent(sessionId, eventType, payload) {
+  const eventId = randomUUID();
+  void (async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await recordEvent(sessionId, eventType, payload, eventId);
+        return;
+      } catch (err) {
+        if (attempt < 2) {
+          await delay(250 * 2 ** attempt);
+        } else {
+          console.error(`[analytics] Failed to record ${eventType} after retries:`, err);
+        }
+      }
+    }
+  })();
+}
 
 export function handleConversationRelayConnection(ws) {
   const openai = new OpenAI();
@@ -158,7 +178,7 @@ export function handleConversationRelayConnection(ws) {
         console.log(
           `[voice-agent] Call ${callSid} connected from ${message.from}`
         );
-        recordEvent(callSid, "call_connected", { callSid, from: message.from });
+        recordVoiceEvent(callSid, "call_connected", { callSid, from: message.from });
         silenceCount = 0;
         startSilenceTimer();
         break;
@@ -199,7 +219,7 @@ export function handleConversationRelayConnection(ws) {
         } else if (message.digit === "2") {
           if (handoffAllowed) {
             relayEnded = true;
-            recordEvent(callSid, "handoff_triggered", { callSid, reason: "keypad_request" });
+            recordVoiceEvent(callSid, "handoff_triggered", { callSid, reason: "keypad_request" });
             sendEnd(ws, JSON.stringify({
               reasonCode: "live-agent-handoff",
               reason: "keypad_request",
@@ -244,7 +264,7 @@ export function handleConversationRelayConnection(ws) {
     cancelActiveResponse();
     const durationMs = callStartTime ? Date.now() - callStartTime : 0;
     console.log(`[voice-agent] Call ${callSid} disconnected`);
-    recordEvent(callSid, "call_ended", { callSid, durationMs });
+    recordVoiceEvent(callSid, "call_ended", { callSid, durationMs });
     clearSilenceTimer();
   });
 }
@@ -340,7 +360,7 @@ async function streamLLMResponse(
             return;
           }
           console.log(`[voice-agent] [${callSid}] Language switch: ${langCode}`);
-          recordEvent(callSid, "language_switched", { callSid, langCode });
+          recordVoiceEvent(callSid, "language_switched", { callSid, langCode });
           sendLanguage(ws, langCode);
           onLanguageSwitch(langCode);
         });
@@ -390,7 +410,7 @@ async function streamLLMResponse(
           args = {};
         }
         console.log(`[voice-agent] [${callSid}] Handoff triggered: ${args.reason || ""}`);
-        recordEvent(callSid, "handoff_triggered", { callSid, reason: args.reason });
+        recordVoiceEvent(callSid, "handoff_triggered", { callSid, reason: args.reason });
 
         sendEnd(ws, JSON.stringify({
           reasonCode: "live-agent-handoff",
@@ -421,7 +441,7 @@ async function streamLLMResponse(
         console.log(
           `[voice-agent] [${callSid}] Tool call: ${tc.name}(${JSON.stringify(args)})`
         );
-        recordEvent(callSid, "tool_used", { callSid, toolName: tc.name, args });
+        recordVoiceEvent(callSid, "tool_used", { callSid, toolName: tc.name, args });
         const result = executeTool(tc.name, args);
         history.push({ role: "tool", tool_call_id: tc.id, content: result });
       }

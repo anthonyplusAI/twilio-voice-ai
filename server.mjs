@@ -4,7 +4,7 @@ import next from "next";
 import twilio from "twilio";
 import { WebSocketServer } from "ws";
 import { handleConversationRelayConnection } from "./voice-agent/handler.mjs";
-import { recordEvent, wipeAllEvents } from "./analytics/db.mjs";
+import { recordEvent, syncFromDurableStore, wipeAllEvents } from "./analytics/db.mjs";
 import { getAllMetrics } from "./analytics/queries.mjs";
 import { renderAdminPage } from "./analytics/admin-html.mjs";
 import { generateReport } from "./analytics/report-pdf.mjs";
@@ -58,7 +58,17 @@ function isAudience(value) {
 }
 
 function isClientEvent(event) {
-  if (!hasExactlyKeys(event, ["type", "payload"])) return false;
+  const hasId = typeof event?.id === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.id);
+  const occurredAt = event?.occurredAt;
+  const hasValidOccurrence = typeof occurredAt === "string" &&
+    occurredAt.length === 24 &&
+    !Number.isNaN(Date.parse(occurredAt)) &&
+    new Date(occurredAt).toISOString() === occurredAt;
+  if (!hasExactlyKeys(event, ["type", "payload"]) &&
+      !(hasExactlyKeys(event, ["id", "type", "payload"]) && hasId) &&
+      !(hasExactlyKeys(event, ["id", "type", "payload", "occurredAt"]) &&
+        hasId && hasValidOccurrence)) return false;
   const payload = event.payload;
   switch (event.type) {
     case "session_started":
@@ -108,7 +118,7 @@ app.prepare().then(() => {
     ? createHash("sha256").update(`${adminUser}:${adminPassword}`).digest()
     : null;
 
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     const { pathname } = safeParseUrl(req);
 
     if (pathname === "/admin" || pathname.startsWith("/admin/")) {
@@ -142,6 +152,22 @@ app.prepare().then(() => {
       return;
     }
 
+    // Deployment readiness also exercises the durable analytics read path.
+    // Report only availability; workshop counts remain organizer-only.
+    if (pathname === "/health/analytics" && req.method === "GET") {
+      res.setHeader("Cache-Control", "no-store");
+      try {
+        await syncFromDurableStore();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
+      } catch (error) {
+        console.error("[health] Analytics storage unavailable:", error);
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "unavailable" }));
+      }
+      return;
+    }
+
     if (pathname === "/api/events" && req.method === "POST") {
       const declaredLength = Number(req.headers["content-length"]);
       if (declaredLength > MAX_EVENT_BODY_BYTES) {
@@ -164,7 +190,7 @@ app.prepare().then(() => {
         }
         chunks.push(chunk);
       });
-      req.on("end", () => {
+      req.on("end", async () => {
         if (rejected) return;
         let batch;
         try {
@@ -183,8 +209,15 @@ app.prepare().then(() => {
           return;
         }
 
-        for (const event of batch.events) {
-          recordEvent(batch.sessionId, event.type, event.payload);
+        try {
+          for (const event of batch.events) {
+            await recordEvent(batch.sessionId, event.type, event.payload,
+              event.id, undefined, undefined, event.occurredAt ?? null);
+          }
+        } catch (err) {
+          console.error("[analytics] Event batch write failed:", err);
+          eventError(res, 503, "Analytics storage is temporarily unavailable");
+          return;
         }
         res.writeHead(204).end();
       });
@@ -194,12 +227,11 @@ app.prepare().then(() => {
       return;
     }
 
-    // Organizer-only: wipe every event in the analytics database so the next
-    // run starts clean. Authentication and same-origin checks above protect
-    // this destructive action; the UI also shows a double-confirm.
+    // Organizer-only: start a fresh analytics generation. Authentication and
+    // same-origin checks above protect this action; the UI double-confirms it.
     if (pathname === "/admin/reset-all" && req.method === "POST") {
       try {
-        const removed = wipeAllEvents();
+        const removed = await wipeAllEvents();
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, removed }));
       } catch (err) {
@@ -212,6 +244,7 @@ app.prepare().then(() => {
 
     if (pathname === "/admin/report") {
       try {
+        await syncFromDurableStore();
         const url = safeParseUrl(req);
         const range = url.searchParams.get("range") === "today" ? "today" : "all";
         const data = getAllMetrics(range);
@@ -233,6 +266,7 @@ app.prepare().then(() => {
     const cleanPath = pathname.replace(/\/+$/, "");
     if (cleanPath === "/admin" || cleanPath === "/admin/data") {
       try {
+        await syncFromDurableStore();
         const url = safeParseUrl(req);
         const range = url.searchParams.get("range") === "all" ? "all" : "today";
         const data = getAllMetrics(range);

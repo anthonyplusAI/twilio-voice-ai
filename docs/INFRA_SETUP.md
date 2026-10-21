@@ -35,7 +35,8 @@ step, then `gh secret delete AZURE_CREDENTIALS` once green.
 
 Azure: RG `rg-voice-ai-workshop`, ACR `voiceaiworkshop`, Container Apps env
 `voiceaiworkshop`, Log Analytics `law-voiceaiworkshop`, Storage `voiceaiworkshop`
-+ file share `voiceaidata` (mounted at `/app/appdata`), Azure Table `CallLimits`,
++ file share `voiceaidata` (mounted at `/app/appdata`), Azure Tables `CallLimits` and
+`AnalyticsEvents`,
 Container App `voice-ai-workshop`, a service principal `voice-ai-workshop-gha-deploy`
 (AcrPush + Contributor) and a federated credential trusting
 GitHub's current main-branch OIDC subject. For repositories using immutable
@@ -85,7 +86,9 @@ GitHub **secrets**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID
 - **Container manifest:** the app is deployed via `.github/containerapp.yaml`
   (env vars + secretRefs + the `appdata` Azure Files volume). The deploy injects
   the SHA-tagged image into it via `envsubst`.
-- **Analytics storage:** the analytics SQLite database writes to local container
-  disk and resets when the container is replaced. It does not use the Azure Files
-  share because SQLite locking is unreliable there. The `CallLimits` Azure Table
-  remains available across app revisions.
+- **Analytics storage:** `AnalyticsEvents` Azure Table holds the durable event
+  history. Local SQLite is a query cache rebuilt from Table by `/admin` and may
+  be discarded on a replica replacement. The `voiceaidata` mount can hold
+  recovery snapshots; live SQLite stays off that share because SMB locking is
+  unreliable. The same `call-limit-storage` connection string serves both
+  `AnalyticsEvents` and `CallLimits`.

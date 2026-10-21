@@ -36,9 +36,15 @@ async function unusedPort() {
 async function startServer(adminEnv, cwd = fixtureRoot) {
   const port = await unusedPort();
   const url = `http://127.0.0.1:${port}`;
-  const env = { ...process.env, NODE_ENV: "production", PORT: String(port) };
+  const env = {
+    ...process.env,
+    NODE_ENV: "production",
+    PORT: String(port),
+    ANALYTICS_LOCAL_ONLY_FOR_TESTS: "1",
+  };
   delete env.ADMIN_PASSWORD;
   delete env.ADMIN_USER;
+  delete env.CALL_LIMIT_AZURE_TABLE_CONNECTION_STRING;
   Object.assign(env, adminEnv);
   let output = "";
   const app = spawn(process.execPath, [join(projectRoot, "server.mjs")], {
@@ -180,6 +186,29 @@ test("public workshop routes remain available without organizer credentials", as
   assert.equal(events.status, 204);
 });
 
+test("analytics readiness checks storage without exposing dashboard data", async () => {
+  const response = await fetch(`${configuredBaseUrl}/health/analytics`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: "ok" });
+});
+
+test("feedback is not acknowledged when durable analytics storage is unavailable", async () => {
+  const url = await startServer({
+    CALL_LIMIT_AZURE_TABLE_CONNECTION_STRING: "invalid-connection-string",
+    ANALYTICS_LOCAL_ONLY_FOR_TESTS: "0",
+  }, createFixtureRoot());
+
+  const readiness = await fetch(`${url}/health/analytics`);
+  assert.equal(readiness.status, 503);
+
+  const response = await fetch(`${url}/api/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ nps: 8, sessionId: "feedback-storage-failure" }),
+  });
+  assert.equal(response.status, 500);
+});
+
 test("only the organizer can reset analytics", async () => {
   const credentials = basicAuth("presenter", "test-secret-for-admin");
   const seed = await fetch(`${configuredBaseUrl}/api/events`, {
@@ -253,4 +282,27 @@ test("an organizer can download the analytics report", async () => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /application\/pdf/);
   assert.ok((await response.arrayBuffer()).byteLength > 100);
+});
+
+test("retrying feedback with the same ID records only one response", async () => {
+  const body = JSON.stringify({
+    id: "4a4bf7a4-bfa1-45ab-822a-59ae1cd938f0",
+    nps: 9,
+    comment: "Helpful workshop",
+    sessionId: "feedback-retry-test",
+  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await fetch(`${configuredBaseUrl}/api/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    assert.equal(response.status, 200);
+  }
+
+  const dashboard = await fetch(`${configuredBaseUrl}/admin/data?range=all`, {
+    headers: { authorization: basicAuth("presenter", "test-secret-for-admin") },
+  });
+  assert.equal(dashboard.status, 200);
+  assert.equal((await dashboard.json()).feedback.total, 1);
 });

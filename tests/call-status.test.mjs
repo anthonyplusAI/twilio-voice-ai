@@ -14,6 +14,8 @@ const credentials = {
   PUBLIC_BASE_URL: "https://workshop.example",
 };
 const completed = [];
+const recorded = [];
+let recordEventFailure = null;
 const limiter = {
   async complete(phoneNumber, reservationId, callSid) {
     completed.push({ phoneNumber, reservationId, callSid });
@@ -39,6 +41,12 @@ function loadCallback() {
       if (specifier === "@/lib/call-limiter.mjs") {
         return { getCallLimiter: () => limiter };
       }
+      if (specifier === "../../../../analytics/db.mjs") {
+        return { recordEvent: async (...args) => {
+          if (recordEventFailure) throw recordEventFailure;
+          recorded.push(args);
+        } };
+      }
       throw new Error(`Unexpected import: ${specifier}`);
     },
     process: { env: credentials },
@@ -59,8 +67,8 @@ const params = {
   To: "+12065550101",
 };
 
-function request(values = params, signature = "", host) {
-  return new Request(callbackUrl, {
+function request(values = params, signature = "", host, url = callbackUrl) {
+  return new Request(url, {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
@@ -70,6 +78,47 @@ function request(values = params, signature = "", host) {
     body: new URLSearchParams(values),
   });
 }
+
+test("a signed initiated callback records a call with a stable ID", async () => {
+  const { POST } = loadCallback();
+  const url = `${callbackUrl}&sessionId=session-test`;
+  const initiated = { ...params, CallStatus: "initiated" };
+  const signature = twilio.getExpectedTwilioSignature(
+    credentials.TWILIO_AUTH_TOKEN,
+    url,
+    initiated
+  );
+  const before = recorded.length;
+  const response = await POST(request(initiated, signature, undefined, url));
+  assert.equal(response.status, 204);
+  assert.deepEqual(JSON.parse(JSON.stringify(recorded.slice(before))), [[
+    "session-test", "call_initiated", { callSid: params.CallSid }, `call-init:${params.CallSid}`,
+  ]]);
+});
+
+test("a terminal callback retries analytics and still releases its reservation", async () => {
+  const { POST } = loadCallback();
+  const url = `${callbackUrl}&sessionId=session-test`;
+  const signature = twilio.getExpectedTwilioSignature(
+    credentials.TWILIO_AUTH_TOKEN,
+    url,
+    params
+  );
+  const before = completed.length;
+  recordEventFailure = new Error("Table unavailable");
+  try {
+    const response = await POST(request(params, signature, undefined, url));
+    assert.equal(response.status, 503);
+    assert.equal(completed.length, before + 1);
+  } finally {
+    recordEventFailure = null;
+  }
+  const retried = await POST(request(params, signature, undefined, url));
+  assert.equal(retried.status, 204);
+  assert.deepEqual(JSON.parse(JSON.stringify(recorded.at(-1))), [
+    "session-test", "call_initiated", { callSid: params.CallSid }, `call-init:${params.CallSid}`,
+  ]);
+});
 
 test("a signed Twilio completion releases only its own phone reservation", async () => {
   const { POST } = loadCallback();

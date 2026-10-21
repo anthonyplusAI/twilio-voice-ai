@@ -2,6 +2,18 @@ import { getDb } from "./db.mjs";
 
 const stmtCache = new Map();
 
+// These events identify a workshop browser session. Hosted voice telemetry uses
+// a Twilio Call SID as session_id, so counting every distinct session_id would
+// count one Explorer and their phone call as two attendees. Progress and call
+// initiation also qualify because an open browser tab can keep emitting after
+// the organizer starts a new run and archives its earlier session_started.
+// Feedback is omitted: the public feedback endpoint also accepts "anonymous".
+const browserEventTypesSQL = `(
+  'session_started', 'audience_changed', 'step_viewed', 'step_completed',
+  'badge_earned', 'agent_configured', 'skip_ahead', 'share_clicked',
+  'progress_reset', 'call_initiated'
+)`;
+
 function stmt(sql) {
   let s = stmtCache.get(sql);
   if (!s) {
@@ -33,10 +45,9 @@ function leadingDateClause(range) {
 // from builder to explorer left both counters stale/doubled).
 function currentAudienceSQL(range) {
   const dc = dateClause(range);
-  // The outer GROUP BY only sees session_ids that have at least one event in
-  // the range; the inner subqueries then look up audience info for those
-  // sessions across all time so we don't lose audience data for a session
-  // that started outside the range but has activity inside it.
+  // The outer GROUP BY only sees browser sessions active in the range; the
+  // inner subqueries then look up audience info across all time so a session
+  // that started outside the range keeps its selected audience.
   return `
     WITH session_audience AS (
       SELECT
@@ -56,7 +67,7 @@ function currentAudienceSQL(range) {
           )
         ) AS audience
       FROM events e1
-      WHERE 1=1 ${dc}
+      WHERE event_type IN ${browserEventTypesSQL} ${dc}
       GROUP BY session_id
     )
   `;
@@ -67,8 +78,8 @@ export function getOverview(range = 'all') {
   const ldc = leadingDateClause(range);
   const audSql = currentAudienceSQL(range);
 
-  const totalSessions = stmt(`SELECT COUNT(DISTINCT session_id) AS c FROM events ${ldc}`).get().c;
-  const sessionsToday = stmt(`SELECT COUNT(DISTINCT session_id) AS c FROM events WHERE created_at >= datetime('now', 'start of day')`).get().c;
+  const totalSessions = stmt(`SELECT COUNT(DISTINCT session_id) AS c FROM events WHERE event_type IN ${browserEventTypesSQL} ${dc}`).get().c;
+  const sessionsToday = stmt(`SELECT COUNT(DISTINCT session_id) AS c FROM events WHERE event_type IN ${browserEventTypesSQL} AND created_at >= datetime('now', 'start of day')`).get().c;
   const builders = stmt(`${audSql} SELECT COUNT(*) AS c FROM session_audience WHERE audience = 'builder'`).get().c;
   const explorers = stmt(`${audSql} SELECT COUNT(*) AS c FROM session_audience WHERE audience = 'explorer'`).get().c;
   const totalCalls = stmt(`SELECT COUNT(*) AS c FROM events WHERE event_type = 'call_initiated' ${dc}`).get().c;
@@ -207,14 +218,14 @@ export function getAgentConfig(range = 'all') {
 }
 
 export function getPacing(range = 'all') {
-  const ldc = leadingDateClause(range);
+  const dc = dateClause(range);
   const sessionDurations = stmt(`
     SELECT session_id,
            MIN(created_at) AS first_event,
            MAX(created_at) AS last_event,
            CAST((julianday(MAX(created_at)) - julianday(MIN(created_at))) * 1440 AS INTEGER) AS minutes
     FROM events
-    ${ldc}
+    WHERE event_type IN ${browserEventTypesSQL} ${dc}
     GROUP BY session_id
     HAVING COUNT(*) > 1
     ORDER BY minutes
@@ -349,12 +360,11 @@ export function getShareStats(range = 'all') {
 
 export function getEngagementStats(range = 'all') {
   const dc = dateClause(range);
-  const ldc = leadingDateClause(range);
 
   const eventsPerSession = stmt(`
     SELECT session_id, COUNT(*) AS events
     FROM events
-    ${ldc}
+    WHERE event_type IN ${browserEventTypesSQL} ${dc}
     GROUP BY session_id
     ORDER BY events DESC
   `).all();
@@ -375,6 +385,25 @@ export function getEngagementStats(range = 'all') {
 
 export function getFeedback(range = 'all') {
   const dc = dateClause(range);
+  // Aggregate every valid numeric response in the selected range. The list
+  // below is deliberately capped for the dashboard, but that cap must not
+  // change totals, ratings, or the NPS score.
+  const summary = stmt(`
+    WITH ratings AS (
+      SELECT CASE WHEN json_valid(payload) THEN
+        CASE WHEN json_type(payload, '$.nps') IN ('integer', 'real')
+          THEN json_extract(payload, '$.nps') END
+      END AS nps
+      FROM events
+      WHERE event_type = 'feedback' ${dc}
+    )
+    SELECT COUNT(nps) AS total,
+           SUM(nps) AS npsSum,
+           SUM(CASE WHEN nps >= 9 THEN 1 ELSE 0 END) AS promoters,
+           SUM(CASE WHEN nps >= 7 AND nps <= 8 THEN 1 ELSE 0 END) AS passives,
+           SUM(CASE WHEN nps <= 6 THEN 1 ELSE 0 END) AS detractors
+    FROM ratings
+  `).get();
   const rows = stmt(`
     SELECT session_id, payload, created_at
     FROM events
@@ -395,14 +424,13 @@ export function getFeedback(range = 'all') {
     };
   });
 
-  const npsValues = items.map(i => i.nps).filter(v => typeof v === 'number');
-  const total = npsValues.length;
+  const total = summary.total;
   const avgNps = total > 0
-    ? Math.round((npsValues.reduce((s, v) => s + v, 0) / total) * 10) / 10
+    ? Math.round((summary.npsSum / total) * 10) / 10
     : 0;
-  const promoters = npsValues.filter(v => v >= 9).length;
-  const passives = npsValues.filter(v => v >= 7 && v <= 8).length;
-  const detractors = npsValues.filter(v => v <= 6).length;
+  const promoters = summary.promoters ?? 0;
+  const passives = summary.passives ?? 0;
+  const detractors = summary.detractors ?? 0;
   const npsScore = total > 0
     ? Math.round(((promoters - detractors) / total) * 100)
     : 0;

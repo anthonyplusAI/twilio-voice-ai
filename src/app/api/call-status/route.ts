@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import twilio from "twilio";
 import { getCallLimiter } from "@/lib/call-limiter.mjs";
+import { recordEvent } from "../../../../analytics/db.mjs";
 
 const terminalStatuses = new Set(["completed", "busy", "failed", "no-answer", "canceled"]);
 const MAX_CALLBACK_BYTES = 16 * 1024;
@@ -85,7 +86,8 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "Wrong Twilio account" }, { status: 403 });
   }
 
-  if (!terminalStatuses.has(params.CallStatus)) {
+  const terminal = terminalStatuses.has(params.CallStatus);
+  if (!terminal && params.CallStatus !== "initiated") {
     return new Response(null, { status: 204 });
   }
 
@@ -96,11 +98,29 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "Incomplete call callback" }, { status: 400 });
   }
 
-  try {
-    await getCallLimiter().complete(phoneNumber, reservationId, callSid);
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    console.error("[api/call-status] Failed to complete call reservation:", error);
-    return Response.json({ error: "Call status is temporarily unavailable" }, { status: 503 });
+  let failed = false;
+  if (terminal) {
+    try {
+      await getCallLimiter().complete(phoneNumber, reservationId, callSid);
+    } catch (error) {
+      failed = true;
+      console.error("[api/call-status] Failed to complete call reservation:", error);
+    }
   }
+
+  const sessionId = incomingUrl.searchParams.get("sessionId");
+  if (sessionId && /^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) {
+    try {
+      // Both initiated and completed callbacks use the same ID so Twilio
+      // retries and out-of-order delivery cannot inflate the call count.
+      await recordEvent(sessionId, "call_initiated", { callSid }, `call-init:${callSid}`);
+    } catch (error) {
+      failed = true;
+      console.error("[api/call-status] Failed to record call analytics:", error);
+    }
+  }
+
+  return failed
+    ? Response.json({ error: "Call status is temporarily unavailable" }, { status: 503 })
+    : new Response(null, { status: 204 });
 }
