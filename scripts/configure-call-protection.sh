@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run once before deploying the protected public workshop. The storage table
-# holds per-number call reservations across Container App revisions; the admin
-# password protects only /admin routes. This uses the existing storage account.
+# Run once before deploying the protected public workshop. The storage tables
+# hold call reservations and analytics across Container App revisions; the
+# admin password protects /admin routes. This uses the existing storage account.
 
 WORKSHOP_RESOURCE_GROUP="${RG:-rg-voice-ai-workshop}"
 WORKSHOP_CONTAINER_APP="${ACA:-voice-ai-workshop}"
@@ -50,6 +50,8 @@ WORKSHOP_TABLE_CONNECTION=$(az storage account show-connection-string \
   --query connectionString -o tsv)
 az storage table create -n CallLimits \
   --connection-string "$WORKSHOP_TABLE_CONNECTION" -o none
+az storage table create -n AnalyticsEvents \
+  --connection-string "$WORKSHOP_TABLE_CONNECTION" -o none
 az containerapp secret set -g "$WORKSHOP_RESOURCE_GROUP" \
   -n "$WORKSHOP_CONTAINER_APP" \
   --secrets "call-limit-storage=$WORKSHOP_TABLE_CONNECTION" -o none
@@ -66,4 +68,4 @@ if [ -n "$WORKSHOP_ADMIN_PASSWORD" ]; then
   unset WORKSHOP_ADMIN_PASSWORD
 fi
 
-echo "CallLimits table and Container App secrets are ready. Deploy the new app revision next."
+echo "CallLimits and AnalyticsEvents tables and Container App secrets are ready. Deploy the new app revision next."

@@ -33,7 +33,13 @@ before(async () => {
   let output = "";
   app = spawn(process.execPath, [join(projectRoot, "server.mjs")], {
     cwd: fixtureRoot,
-    env: { ...process.env, NODE_ENV: "production", PORT: String(port) },
+    env: {
+      ...process.env,
+      NODE_ENV: "production",
+      PORT: String(port),
+      ANALYTICS_LOCAL_ONLY_FOR_TESTS: "1",
+      CALL_LIMIT_AZURE_TABLE_CONNECTION_STRING: "",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   app.stdout.on("data", (chunk) => { output += chunk; });
@@ -92,6 +98,38 @@ test("browser analytics events are accepted and recorded", async () => {
   const response = await postEvents({ sessionId, events });
   assert.equal(response.status, 204);
   assert.deepEqual(eventsFor(sessionId).map((row) => row.event_type), events.map((event) => event.type));
+});
+
+test("retrying a browser event with the same ID records it once", async () => {
+  const sessionId = "idempotent-browser-session";
+  const batch = {
+    sessionId,
+    events: [{
+      id: "a7fc3427-96ea-483f-a224-043423fb05c9",
+      type: "session_started",
+      payload: { audience: "explorer" },
+    }],
+  };
+
+  assert.equal((await postEvents(batch)).status, 204);
+  assert.equal((await postEvents(batch)).status, 204);
+  assert.equal(eventsFor(sessionId).length, 1);
+});
+
+test("a queued browser event keeps a validated occurrence timestamp", async () => {
+  const sessionId = "timestamped-browser-session";
+  const event = {
+    id: "a4ad82bc-3055-4696-8f6b-d19cc2b662da",
+    type: "session_started",
+    payload: { audience: "builder" },
+    occurredAt: "2026-10-21T17:00:00.000Z",
+  };
+  assert.equal((await postEvents({ sessionId, events: [event] })).status, 204);
+  assert.equal(eventsFor(sessionId).length, 1);
+
+  const invalid = { ...event, id: "e7c14804-f72e-48b3-90e8-a71b078d65e4", occurredAt: "yesterday" };
+  assert.equal((await postEvents({ sessionId, events: [invalid] })).status, 400);
+  assert.equal(eventsFor(sessionId).length, 1);
 });
 
 test("a batch above 100 events is rejected before any event is recorded", async () => {

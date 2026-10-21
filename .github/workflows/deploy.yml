@@ -218,6 +218,31 @@ jobs:
           done
           echo "Deployed: https://$FQDN"
 
+      # Unlike /health, this endpoint reads the durable Azure Table. A 200
+      # confirms analytics storage is ready before the deploy is marked green.
+      - name: Smoke test analytics storage
+        env:
+          FQDN: ${{ steps.fqdn.outputs.fqdn }}
+          REVISION_FQDN: ${{ steps.revision.outputs.fqdn }}
+        run: |
+          set -euo pipefail
+          for host in "$REVISION_FQDN" "$FQDN"; do
+            for i in $(seq 1 30); do
+              code=$(curl --silent --show-error --max-time 10 -o /dev/null \
+                -w '%{http_code}' "https://$host/health/analytics" || true)
+              if [ "$code" = 200 ]; then
+                echo "Analytics storage OK on $host after attempt $i"
+                break
+              fi
+              echo "Attempt $i on $host: /health/analytics returned $code"
+              if [ "$i" -eq 30 ]; then
+                echo "::error::/health/analytics on $host never returned 200 after 30 attempts."
+                exit 1
+              fi
+              sleep 10
+            done
+          done
+
       - name: Smoke test voice routes and organizer access
         env:
           FQDN: ${{ steps.fqdn.outputs.fqdn }}
