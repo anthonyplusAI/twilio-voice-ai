@@ -7,6 +7,7 @@ const workshopConfig: WorkshopConfig = {
   description:
     "A guided workshop where you build a real conversational AI voice application using Twilio Conversation Relay",
   duration: "90 minutes",
+  repositoryUrl: "https://github.com/anthonyplusAI/twilio-voice-ai",
 
   hero: {
     tagline:

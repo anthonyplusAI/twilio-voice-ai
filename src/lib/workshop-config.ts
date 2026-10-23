@@ -21,6 +21,9 @@ export interface WorkshopConfig {
   /** Estimated total duration (e.g. "90 minutes") */
   duration: string;
 
+  /** Optional GitHub repository URL shown in the workshop chrome */
+  repositoryUrl?: string;
+
   /** Hero page configuration */
   hero: {
     /** Subtitle / tagline below the title */
