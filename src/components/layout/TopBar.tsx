@@ -10,6 +10,7 @@ import { useProgressContext } from "./ProgressContext";
 import { Code, Eye, ChevronDown, Check, Sun, Moon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { FeedbackButton } from "@/components/FeedbackButton";
+import { GitHubLink } from "@/components/GitHubLink";
 
 const MODE_INFO: Record<AudienceMode, { icon: typeof Code; label: string; description: string }> = {
   builder: {
@@ -79,7 +80,7 @@ export function TopBar() {
         </span>
       </Link>
 
-      {/* Chapter dots — horizontally scrollable on mobile, wraps to center on lg */}
+      {/* Chapter dots — horizontally scrollable on smaller screens */}
       <nav
         aria-label="Workshop chapters"
         data-scroll-x="true"
@@ -126,14 +127,14 @@ export function TopBar() {
                 )}
               </div>
               <span
-                className={`text-xs font-bold hidden lg:block transition-colors ${
+                className={`text-xs font-bold hidden 2xl:block transition-colors ${
                   isCurrent ? "text-text-primary" : "text-text-muted group-hover:text-text-secondary"
                 }`}
               >
                 {chapter.title}
               </span>
               {!isLast && (
-                <div className="w-4 h-px bg-surface-4 hidden lg:block" />
+                <div className="w-4 h-px bg-surface-4 hidden 2xl:block" />
               )}
             </Link>
           );
@@ -159,6 +160,12 @@ export function TopBar() {
       {/* Feedback */}
       <FeedbackButton />
 
+      {config.repositoryUrl && (
+        <div className="shrink-0 sm:ml-2">
+          <GitHubLink href={config.repositoryUrl} placement="topbar" />
+        </div>
+      )}
+
       {/* Audience mode toggle with popover */}
       {config.features.audienceToggle && (
         <div className="relative shrink-0 ml-2 sm:ml-6" ref={popoverRef}>
@@ -167,13 +174,13 @@ export function TopBar() {
             aria-label={`Experience level: ${MODE_INFO[mode].label}. Click to change.`}
             aria-expanded={popoverOpen}
             aria-haspopup="menu"
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-2 border border-navy-border hover:bg-surface-3 transition-colors"
+            className="flex h-8 w-8 items-center justify-center gap-2 rounded-lg bg-surface-2 border border-navy-border hover:bg-surface-3 transition-colors sm:h-auto sm:w-auto sm:px-3 sm:py-1.5"
           >
             <ActiveIcon className="w-3.5 h-3.5 text-twilio-red" />
-            <span className="text-xs font-bold text-text-primary">
+            <span className="hidden text-xs font-bold text-text-primary sm:inline">
               {MODE_INFO[mode].label}
             </span>
-            <ChevronDown className={`w-3 h-3 text-text-muted transition-transform duration-200 ${popoverOpen ? "rotate-180" : ""}`} />
+            <ChevronDown className={`hidden w-3 h-3 text-text-muted transition-transform duration-200 sm:block ${popoverOpen ? "rotate-180" : ""}`} />
           </button>
 
           <AnimatePresence>

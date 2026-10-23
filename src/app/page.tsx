@@ -9,6 +9,7 @@ import { AudienceProvider, useAudienceMode } from "@/lib/AudienceContext";
 import { ThemeProvider, useTheme } from "@/lib/ThemeContext";
 import { OnboardingModal } from "@/components/layout/OnboardingModal";
 import { MagicHat } from "@/components/MagicHat";
+import { GitHubLink } from "@/components/GitHubLink";
 
 const stagger = {
   hidden: {},
@@ -36,7 +37,7 @@ export default function Home() {
 }
 
 function HomeContent() {
-  const { title, hero, chapters, branding, duration, features } = workshopConfig;
+  const { title, hero, chapters, branding, duration, features, repositoryUrl } = workshopConfig;
   const { needsOnboarding } = useAudienceMode();
   const { toggleTheme, isDark } = useTheme();
   const [showModal, setShowModal] = useState(false);
@@ -62,6 +63,12 @@ function HomeContent() {
     <OnboardingModal open={showModal} onComplete={handleOnboardingComplete} />
     <div className="min-h-screen flex flex-col items-center justify-center bg-navy relative overflow-hidden">
       <MagicHat />
+
+      {repositoryUrl && (
+        <div className="fixed top-5 left-5 z-20">
+          <GitHubLink href={repositoryUrl} placement="home" />
+        </div>
+      )}
 
       {/* Theme toggle */}
       {features.themeToggle && (
