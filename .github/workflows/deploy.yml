@@ -37,7 +37,7 @@ jobs:
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Compute image tag
         id: meta
         env:
@@ -73,7 +73,7 @@ jobs:
     env:
       IMAGE: ${{ needs.build-and-push.outputs.image }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Azure login (OIDC)
         uses: azure/login@v3
         with:
