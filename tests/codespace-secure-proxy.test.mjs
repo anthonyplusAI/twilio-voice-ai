@@ -27,6 +27,7 @@ let proxy;
 let proxyBase;
 let wsConnections = 0;
 let callRequests = 0;
+let actionRequests = 0;
 let siteVerifications = 0;
 let siteAvailable = true;
 
@@ -39,17 +40,19 @@ async function close(server) {
   await new Promise((resolve) => server.close(resolve));
 }
 
-function signed(token, url = wsUrl) {
-  return twilio.getExpectedTwilioSignature(token, url, {});
+function signed(token, url = wsUrl, params = {}) {
+  return twilio.getExpectedTwilioSignature(token, url, params);
 }
 
-function requestHttp(path, { method = "GET", body = "", requestHost = host } = {}) {
+function requestHttp(path, { method = "GET", body = "", requestHost = host, signature, headers = {}, trailers } = {}) {
   return new Promise((resolve, reject) => {
     const request = http.request(`${proxyBase}${path}`, {
       method,
       headers: {
         Host: requestHost,
         ...(body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+        ...(signature ? { "X-Twilio-Signature": signature } : {}),
+        ...headers,
       },
     }, (response) => {
       const chunks = [];
@@ -57,6 +60,7 @@ function requestHttp(path, { method = "GET", body = "", requestHost = host } = {
       response.on("end", () => resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString() }));
     });
     request.once("error", reject);
+    if (trailers) request.addTrailers(trailers);
     request.end(body);
   });
 }
@@ -89,6 +93,7 @@ function attemptUpgrade(signature, path = "/ws", requestHost = host) {
 before(async () => {
   upstream = http.createServer((req, res) => {
     if (req.url === "/call") callRequests++;
+    if (req.url === "/call-ended") actionRequests++;
     if (req.url === "/health") {
       res.writeHead(200).end("ok");
       return;
@@ -111,11 +116,11 @@ before(async () => {
     upstreamPort,
     resolveHost: () => host,
     readToken: () => localToken,
-    validateTwilio: (token, signature, url) => twilio.validateRequest(token, signature, url, {}),
-    verifySite: async (url, signature) => {
+    validateTwilio: (token, signature, url, params = {}) => twilio.validateRequest(token, signature, url, params),
+    verifySite: async (url, signature, params = {}) => {
       siteVerifications++;
       if (!siteAvailable) throw new Error("Site offline");
-      return twilio.validateRequest(siteToken, signature, url, {});
+      return twilio.validateRequest(siteToken, signature, url, params);
     },
   });
   proxyBase = `http://127.0.0.1:${await listen(proxy)}`;
@@ -131,8 +136,15 @@ after(async () => {
 });
 
 test("proxy forwards only required HTTP routes and preserves the public Host", async () => {
+  const beforeSite = siteVerifications;
   for (const [path, requestHost] of [["/twiml", "localhost:8081"], ["/call-ended", host]]) {
-    const response = await requestHttp(path, { method: "POST", body: "CallSid=CApreflight", requestHost });
+    const body = "CallSid=CApreflight";
+    const response = await requestHttp(path, {
+      method: "POST", body, requestHost,
+      ...(path === "/call-ended" ? {
+        signature: signed(localToken, `https://${host}/call-ended`, { CallSid: "CApreflight" }),
+      } : {}),
+    });
     assert.equal(response.status, 200);
     assert.match(response.body, new RegExp(`host="${host}" path="${path}"`));
   }
@@ -141,11 +153,89 @@ test("proxy forwards only required HTTP routes and preserves the public Host", a
   assert.equal((await requestHttp("/twiml")).status, 404);
   assert.equal((await requestHttp("/admin")).status, 404);
   assert.equal(callRequests, 0);
+  assert.equal(siteVerifications, beforeSite);
+});
+
+test("unsigned and tampered action callbacks cannot reach the learner server", async () => {
+  const before = actionRequests;
+  const actionUrl = `https://${host}/call-ended`;
+  const original = { CallSid: "CA-signed", HandoffData: '{"reasonCode":"live-agent-handoff"}' };
+  const body = new URLSearchParams(original).toString();
+  assert.equal((await requestHttp("/call-ended", { method: "POST", body })).status, 403);
+  assert.equal((await requestHttp("/call-ended", {
+    method: "POST", body,
+    signature: signed("wrong-token", actionUrl, original),
+  })).status, 403);
+  assert.equal((await requestHttp("/call-ended", {
+    method: "POST", body: `${body}&Extra=altered`,
+    signature: signed(localToken, actionUrl, original),
+  })).status, 403);
+  const duplicate = new URLSearchParams([
+    ["CallSid", "CA-duplicate"],
+    ["HandoffData", '{"reasonCode":"live-agent-handoff"}'],
+    ["HandoffData", '{"reasonCode":"normal"}'],
+  ]).toString();
+  assert.equal((await requestHttp("/call-ended", {
+    method: "POST", body: duplicate,
+    signature: signed(localToken, actionUrl, {
+      CallSid: "CA-duplicate", HandoffData: '{"reasonCode":"normal"}',
+    }),
+  })).status, 400);
+  assert.equal(actionRequests, before);
+});
+
+test("site-signed Builder action reaches the learner server only while verification is available", async () => {
+  const beforeActions = actionRequests;
+  const beforeVerifications = siteVerifications;
+  const params = { CallSid: "CA-site", HandoffData: '{"reasonCode":"live-agent-handoff"}' };
+  const options = {
+    method: "POST",
+    body: new URLSearchParams(params).toString(),
+    signature: signed(siteToken, `https://${host}/call-ended`, params),
+  };
+  const response = await requestHttp("/call-ended", options);
+  assert.equal(response.status, 200);
+  assert.equal(actionRequests, beforeActions + 1);
+  assert.equal(siteVerifications, beforeVerifications + 1);
+
+  siteAvailable = false;
+  try {
+    assert.equal((await requestHttp("/call-ended", options)).status, 503);
+    assert.equal(actionRequests, beforeActions + 1);
+  } finally {
+    siteAvailable = true;
+  }
+});
+
+test("valid chunked Builder action with a trailer reaches the learner server", async () => {
+  const beforeActions = actionRequests;
+  const beforeVerifications = siteVerifications;
+  const params = { CallSid: "CA-chunked", HandoffData: '{"reasonCode":"live-agent-handoff"}' };
+  const response = await requestHttp("/call-ended", {
+    method: "POST",
+    body: new URLSearchParams(params).toString(),
+    signature: signed(localToken, `https://${host}/call-ended`, params),
+    headers: { "Transfer-Encoding": "chunked", Trailer: "X-Workshop-Probe" },
+    trailers: { "X-Workshop-Probe": "received" },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(actionRequests, beforeActions + 1);
+  assert.equal(siteVerifications, beforeVerifications);
 });
 
 test("proxy rejects oversized HTTP bodies", async () => {
   const response = await requestHttp("/twiml", { method: "POST", body: "x".repeat(16 * 1024 + 1) });
   assert.equal(response.status, 413);
+
+  const before = actionRequests;
+  const params = { CallSid: "CA-large", Notes: "x".repeat(16 * 1024) };
+  const action = await requestHttp("/call-ended", {
+    method: "POST",
+    body: new URLSearchParams(params).toString(),
+    signature: signed(localToken, `https://${host}/call-ended`, params),
+  });
+  assert.equal(action.status, 413);
+  assert.equal(actionRequests, before);
 });
 
 test("unsigned and wrongly signed WebSockets never reach the attendee server", async () => {
@@ -211,6 +301,22 @@ test("hosted verifier request is bounded to the workshop origin", async () => {
   assert.equal(captured.url, "https://workshop.example/api/verify-builder-ws");
   assert.deepEqual(JSON.parse(captured.options.body), { url: wsUrl, signature: signed(siteToken) });
   assert.equal(captured.options.redirect, "error");
+
+  const actionUrl = `https://${host}/call-ended`;
+  const params = { CallSid: "CA-site", HandoffData: '{"reasonCode":"live-agent-handoff"}' };
+  await verifyHostedSignature(actionUrl, signed(siteToken, actionUrl, params), {
+    params,
+    siteOrigin: "https://workshop.example",
+    fetchImpl: async (url, options) => {
+      captured = { url, options };
+      return Response.json({ valid: true });
+    },
+  });
+  assert.deepEqual(JSON.parse(captured.options.body), {
+    url: actionUrl,
+    signature: signed(siteToken, actionUrl, params),
+    params,
+  });
 });
 
 test("Codespaces proxy resolves public Host from its current tunnel file", () => {

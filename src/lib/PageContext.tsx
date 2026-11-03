@@ -3,24 +3,28 @@
 import { createContext, useContext, useState, useCallback, useMemo } from "react";
 
 interface PageContextValue {
+  stepKey: string | null;
   currentPage: number;
   totalPages: number;
-  setPageInfo: (currentPage: number, totalPages: number) => void;
+  contentReady: boolean;
+  setPageInfo: (stepKey: string, currentPage: number, totalPages: number, contentReady: boolean) => void;
 }
 
 const PageContext = createContext<PageContextValue>({
+  stepKey: null,
   currentPage: 0,
   totalPages: 1,
+  contentReady: false,
   setPageInfo: () => {},
 });
 
 export function PageProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState({ currentPage: 0, totalPages: 1 });
+  const [state, setState] = useState({ stepKey: null as string | null, currentPage: 0, totalPages: 1, contentReady: false });
 
-  const setPageInfo = useCallback((currentPage: number, totalPages: number) => {
+  const setPageInfo = useCallback((stepKey: string, currentPage: number, totalPages: number, contentReady: boolean) => {
     setState((prev) => {
-      if (prev.currentPage === currentPage && prev.totalPages === totalPages) return prev;
-      return { currentPage, totalPages };
+      if (prev.stepKey === stepKey && prev.currentPage === currentPage && prev.totalPages === totalPages && prev.contentReady === contentReady) return prev;
+      return { stepKey, currentPage, totalPages, contentReady };
     });
   }, []);
 

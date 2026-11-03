@@ -205,6 +205,14 @@ LANGUAGE DETECTION:
     },
 
     {
+      type: "callout",
+      audience: "builder",
+      variant: "info",
+      content:
+        "Add the new `error` case inside your existing `handleMessage(ws, data)` switch. Keep its `setup`, `prompt`, `interrupt`, and `dtmf` cases. The function shown below is an excerpt to show where the case belongs, not a replacement for the entire handler.",
+    },
+
+    {
       type: "json-message",
       audience: "builder",
       direction: "inbound",
@@ -221,7 +229,7 @@ LANGUAGE DETECTION:
       language: "javascript",
       file: "server.js",
       highlight: ["12-21"],
-      code: `function handleMessage(ws, state, data) {
+      code: `function handleMessage(ws, data) {
   let msg;
   try {
     msg = JSON.parse(data.toString());
@@ -239,7 +247,7 @@ LANGUAGE DETECTION:
       // Don't try to retry automatically -- a second failure in a row
       // would just burn time while the caller waits in silence.
       console.error("⚠️ Conversation Relay error:", msg.description);
-      sendText(ws, state,
+      sendText(ws,
         "I'm having a brief technical issue. " +
         "Could you say that again?",
         true,
@@ -263,7 +271,7 @@ LANGUAGE DETECTION:
       type: "prose",
       audience: "builder",
       content:
-        "This excerpt shows the error branch of your existing `streamResponse`. Keep the streaming, tool-call, interruption, and silence-timer logic from the previous chapter; do not replace the whole function with this excerpt.",
+        "This excerpt shows the error branch of your existing `streamResponse(ws, iteration = 0)`. Keep its `stateFor(ws)` lookup and the streaming, tool-call, interruption, and silence-timer logic from the previous chapter; do not replace the whole function with this excerpt.",
     },
 
     {
@@ -271,7 +279,8 @@ LANGUAGE DETECTION:
       audience: "builder",
       language: "javascript",
       file: "server.js",
-      code: `async function streamResponse(ws, state, iteration = 0) {
+      code: `async function streamResponse(ws, iteration = 0) {
+  const state = stateFor(ws);
   try {
     const stream = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-5.4-nano",
@@ -294,7 +303,7 @@ LANGUAGE DETECTION:
     const fallback = "I'm sorry, I'm having a technical issue. " +
       "Could you repeat that, or would you like me to " +
       "transfer you to a team member?";
-    sendText(ws, state, fallback, true);
+    sendText(ws, fallback, true);
     state.conversationHistory.push({ role: "assistant", content: fallback });
   }
 }`,
@@ -312,7 +321,7 @@ LANGUAGE DETECTION:
       type: "solution",
       audience: "builder",
       explanation:
-        "Both files at the end of the workshop. `tool-handlers.js` validates the live handoff destination before ending the AI session. The action URL speaks the transfer announcement once before dialing. `server.js` is the complete polished version with tool calling, interruptions, DTMF, silence detection, language switching, handoff support, and error handling. Each WebSocket connection keeps its own conversation state. The runnable Twilio-Mart prompt below is a fallback; restore your own persona when copying, keeping its tool and language instructions. Keep your speech model, greeting, and other settings too. For the English/Spanish exercise, this `/twiml` example omits a fixed voice and provider so Twilio selects its documented defaults; you may restore a custom voice after verifying it in both languages.",
+        "Both files at the end of the workshop. `tool-handlers.js` validates the live handoff destination before ending the AI session. The action URL speaks the transfer announcement once before dialing. `server.js` is the complete polished version with tool calling, interruptions, DTMF, silence detection, language switching, handoff support, and error handling. Each WebSocket connection keeps its own conversation state. The complete file passes that state explicitly between helpers; replace your whole `server.js` if you use it, while the incremental snippets above keep the Chapter 5 signatures. The runnable Twilio-Mart prompt below is a fallback; restore your own persona when copying, keeping its tool and language instructions. Keep your speech model, greeting, and other settings too. For the English/Spanish exercise, this `/twiml` example omits a fixed voice and provider so Twilio selects its documented defaults; you may restore a custom voice after verifying it in both languages.",
       files: [
         {
           file: "tool-handlers.js",

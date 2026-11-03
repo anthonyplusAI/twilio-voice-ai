@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
@@ -24,7 +24,6 @@ export function ConfirmModal({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
-  const confirmBtnRef = useRef<HTMLButtonElement>(null);
   const trapRef = useFocusTrap<HTMLDivElement>(open);
 
   useEffect(() => {
@@ -33,9 +32,6 @@ export function ConfirmModal({
       if (e.key === "Escape") {
         e.preventDefault();
         onCancel();
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        onConfirm();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -100,7 +96,6 @@ export function ConfirmModal({
                   {cancelLabel}
                 </button>
                 <button
-                  ref={confirmBtnRef}
                   onClick={onConfirm}
                   className="px-4 py-2 rounded-lg text-sm font-bold bg-twilio-red text-white hover:bg-twilio-red/90 transition-colors shadow-[0_2px_10px_rgba(239,34,58,0.3)]"
                 >

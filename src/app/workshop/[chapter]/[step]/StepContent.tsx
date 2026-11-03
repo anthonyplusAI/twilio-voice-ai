@@ -13,10 +13,7 @@ import { useAnalyticsContext } from "@/lib/AnalyticsContext";
 import { useAudienceMode } from "@/lib/AudienceContext";
 import { splitIntoPages } from "@/lib/page-utils";
 import { usePageContext } from "@/lib/PageContext";
-import workshopConfig from "@/workshop.config";
 import { SKIP_AHEAD_COPY } from "@/lib/workshop-copy";
-
-const SKIP_UNLOCK_KEY = `workshop-${workshopConfig.id}-skip-unlock-position`;
 
 interface StepContentProps {
   chapterSlug: string;
@@ -30,7 +27,13 @@ export function StepContent({ chapterSlug, stepSlug }: StepContentProps) {
   const searchParams = useSearchParams();
   const { mode } = useAudienceMode();
   const { getStep, chapters } = useWorkshop();
-  const { completeStep, loaded, completedStepsSet } = useProgressContext();
+  const {
+    completeStep,
+    loaded,
+    completedStepsSet,
+    skipUnlockPosition,
+    unlockThroughPosition,
+  } = useProgressContext();
   const { emit } = useAnalyticsContext();
   const { setPageInfo } = usePageContext();
 
@@ -76,24 +79,13 @@ export function StepContent({ chapterSlug, stepSlug }: StepContentProps) {
     return max + 1; // one past the furthest completed step
   }, [flatSteps, completedStepsSet]);
 
-  const [skipConfirm, setSkipConfirm] = useState<
-    "pending" | "allowed" | "declined"
-  >("pending");
+  const [skipConfirm, setSkipConfirm] = useState<"pending" | "declined">("pending");
 
-  // Session-scoped "furthest position the learner has explicitly unlocked by
-  // confirming the skip-ahead modal." Persisting this across back/forward nav
-  // means they won't be re-prompted for a position they already approved.
-  // Keyed on session (not localStorage) so a fresh browser visit re-prompts.
+  // Closing a skip dialog is local to this route. The shared unlock position
+  // lives in ProgressProvider so it remains available across route changes.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = sessionStorage.getItem(SKIP_UNLOCK_KEY);
-    const unlocked = stored ? parseInt(stored, 10) : -1;
-    if (Number.isFinite(unlocked) && targetPosition >= 0 && targetPosition <= unlocked) {
-      queueMicrotask(() => setSkipConfirm("allowed"));
-    } else {
-      queueMicrotask(() => setSkipConfirm("pending"));
-    }
-  }, [chapterSlug, stepSlug, targetPosition]);
+    queueMicrotask(() => setSkipConfirm("pending"));
+  }, [key]);
 
   useEffect(() => {
     if (loaded && chapterId && stepId) {
@@ -111,28 +103,17 @@ export function StepContent({ chapterSlug, stepSlug }: StepContentProps) {
   const currentPage = Math.max(0, Math.min(rawPage, totalPages - 1));
   const currentBlocks = pages[currentPage] ?? [];
 
-  useEffect(() => {
-    setPageInfo(currentPage, totalPages);
-  }, [currentPage, totalPages, setPageInfo]);
-
   const isAhead =
     loaded && targetPosition >= 0 && targetPosition > maxAllowedPosition;
-  const showSkipModal = isAhead && skipConfirm === "pending";
-  const blockContent = isAhead && skipConfirm !== "allowed";
+  const blockContent = isAhead && targetPosition > skipUnlockPosition;
+  const showSkipModal = blockContent && skipConfirm === "pending";
+
+  useEffect(() => {
+    setPageInfo(key, currentPage, totalPages, loaded && !blockContent);
+  }, [key, currentPage, totalPages, loaded, blockContent, setPageInfo]);
 
   const allowSkip = useCallback(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const stored = sessionStorage.getItem(SKIP_UNLOCK_KEY);
-        const prev = stored ? parseInt(stored, 10) : -1;
-        if (!Number.isFinite(prev) || targetPosition > prev) {
-          sessionStorage.setItem(SKIP_UNLOCK_KEY, String(targetPosition));
-        }
-      } catch {
-        // sessionStorage unavailable — still allow skip for this render
-      }
-    }
-    setSkipConfirm("allowed");
+    unlockThroughPosition(targetPosition);
     const fromStep = flatSteps[maxAllowedPosition];
     const toStep = flatSteps[targetPosition];
     if (fromStep && toStep) {
@@ -141,15 +122,7 @@ export function StepContent({ chapterSlug, stepSlug }: StepContentProps) {
         toStep: `${toStep.chapterSlug}/${toStep.stepSlug}`,
       });
     }
-    for (let i = maxAllowedPosition; i <= targetPosition; i++) {
-      const s = flatSteps[i];
-      if (!s) continue;
-      const key = `chapter-${s.chapterId}:step-${s.stepId}`;
-      if (!completedStepsSet.has(key)) {
-        completeStep(s.chapterId, s.stepId, { silent: true });
-      }
-    }
-  }, [targetPosition, maxAllowedPosition, flatSteps, completedStepsSet, completeStep, emit]);
+  }, [targetPosition, maxAllowedPosition, flatSteps, emit, unlockThroughPosition]);
 
   const fallbackStep = flatSteps[Math.max(0, maxAllowedPosition)] ?? flatSteps[0];
 

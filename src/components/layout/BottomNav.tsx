@@ -19,9 +19,9 @@ export function BottomNav() {
   const chapterSlug = params.chapter as string;
   const stepSlug = params.step as string;
   const { getAdjacentSteps, getStep } = useWorkshop();
-  const { completionPercentage, completedStepsSet, completeStep } =
+  const { completionPercentage, completedStepsSet, completeStep, loaded } =
     useProgressContext();
-  const { currentPage, totalPages } = usePageContext();
+  const { stepKey: pageStepKey, currentPage, totalPages, contentReady } = usePageContext();
   const { mode } = useAudienceMode();
   const accent = workshopConfig.branding.accentColor;
   const pct = completionPercentage();
@@ -33,7 +33,9 @@ export function BottomNav() {
 
   const current = chapterSlug && stepSlug ? getStep(chapterSlug, stepSlug) : null;
 
-  const hasSubPages = totalPages > 1;
+  const hasCurrentPageInfo =
+    pageStepKey === `${chapterSlug}/${stepSlug}` && contentReady;
+  const hasSubPages = hasCurrentPageInfo && totalPages > 1;
 
   const prevStepLastPage = useMemo(() => {
     if (!adjacent?.prev) return 0;
@@ -45,7 +47,7 @@ export function BottomNav() {
   }, [adjacent?.prev, mode]);
 
   const prevHref = useMemo(() => {
-    if (!adjacent) return null;
+    if (!adjacent || !hasCurrentPageInfo) return null;
     if (hasSubPages && currentPage > 0) {
       return `/workshop/${chapterSlug}/${stepSlug}?p=${currentPage - 1}`;
     }
@@ -54,7 +56,7 @@ export function BottomNav() {
       return prevStepLastPage > 0 ? `${base}?p=${prevStepLastPage}` : base;
     }
     return null;
-  }, [adjacent, hasSubPages, currentPage, chapterSlug, stepSlug, prevStepLastPage]);
+  }, [adjacent, hasCurrentPageInfo, hasSubPages, currentPage, chapterSlug, stepSlug, prevStepLastPage]);
 
   const prevLabel = useMemo(() => {
     if (hasSubPages && currentPage > 0) return current?.step.title ?? "Previous";
@@ -62,7 +64,7 @@ export function BottomNav() {
   }, [hasSubPages, currentPage, current, adjacent]);
 
   const nextHref = useMemo(() => {
-    if (!adjacent) return null;
+    if (!adjacent || !hasCurrentPageInfo) return null;
     if (hasSubPages && currentPage < totalPages - 1) {
       return `/workshop/${chapterSlug}/${stepSlug}?p=${currentPage + 1}`;
     }
@@ -70,7 +72,7 @@ export function BottomNav() {
       return `/workshop/${adjacent.next.chapter.slug}/${adjacent.next.step.slug}`;
     }
     return null;
-  }, [adjacent, hasSubPages, currentPage, totalPages, chapterSlug, stepSlug]);
+  }, [adjacent, hasCurrentPageInfo, hasSubPages, currentPage, totalPages, chapterSlug, stepSlug]);
 
   const nextLabel = useMemo(() => {
     if (hasSubPages && currentPage < totalPages - 1) return current?.step.title ?? "Next";
@@ -102,12 +104,22 @@ export function BottomNav() {
   }, [adjacent, router, prevHref, nextHref]);
 
   const isLastStep = adjacent?.next === null;
-  const isLastPage = currentPage === totalPages - 1;
+  const isLastPage = hasCurrentPageInfo && currentPage === totalPages - 1;
   const currentStepCompleted =
     current != null &&
     completedStepsSet.has(
       `chapter-${current.chapter.id}:step-${current.step.id}`
     );
+  const firstIncompleteHref = useMemo(() => {
+    for (const chapter of workshopConfig.chapters) {
+      for (const step of chapter.steps) {
+        if (!completedStepsSet.has(`chapter-${chapter.id}:step-${step.id}`)) {
+          return `/workshop/${chapter.slug}/${step.slug}`;
+        }
+      }
+    }
+    return null;
+  }, [completedStepsSet]);
 
   // The terminal step has nowhere to navigate forward to, so ProgressTracker's
   // "complete on leave" trigger never fires for it. Auto-complete it once the
@@ -115,9 +127,9 @@ export function BottomNav() {
   // /workshop/complete guard stops redirecting them back. Keep this hook
   // *before* the early returns below so hook order stays stable across renders.
   useEffect(() => {
-    if (!current || !isLastStep || !isLastPage || currentStepCompleted) return;
+    if (!loaded || !current || !isLastStep || !isLastPage || currentStepCompleted) return;
     completeStep(current.chapter.id, current.step.id, { silent: true });
-  }, [current, isLastStep, isLastPage, currentStepCompleted, completeStep]);
+  }, [loaded, current, isLastStep, isLastPage, currentStepCompleted, completeStep]);
 
   if (!adjacent || onCompletePage) return null;
 
@@ -125,16 +137,18 @@ export function BottomNav() {
     ? current.chapter.steps.findIndex((s) => s.slug === current.step.slug)
     : -1;
 
-  const showFinishCta = isLastStep && isLastPage && currentStepCompleted;
+  const showFinishCta = isLastStep && isLastPage && currentStepCompleted && pct === 100;
+  const showReviewCta = isLastStep && isLastPage && currentStepCompleted &&
+    pct < 100 && firstIncompleteHref;
 
   return (
-    <footer className="h-16 border-t border-navy-border bg-navy/80 backdrop-blur-md flex items-center px-6 shrink-0 z-30">
+    <footer className="min-h-16 border-t border-navy-border bg-navy/80 backdrop-blur-md grid grid-cols-2 items-center gap-x-3 gap-y-2 px-4 py-2 shrink-0 z-30 sm:h-16 sm:flex sm:gap-0 sm:px-6 sm:py-0">
       {/* Previous */}
-      <div className="w-52 shrink-0">
+      <div className="order-1 min-w-0 sm:w-52 sm:shrink-0">
         {prevHref && prevLabel && (
           <Link
             href={prevHref}
-            className="flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition-colors"
+            className="flex min-w-0 items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition-colors"
           >
             <ChevronLeft className="w-4 h-4 shrink-0" />
             <span className="font-bold truncate">{prevLabel}</span>
@@ -143,7 +157,7 @@ export function BottomNav() {
       </div>
 
       {/* Center: Progress bar + page dots */}
-      <div className="flex-1 flex flex-col items-center gap-1.5 px-6">
+      <div className="order-3 col-span-2 min-w-0 flex flex-col items-center gap-1.5 sm:order-2 sm:flex-1 sm:px-6">
         <div className="w-full max-w-md h-2.5 rounded-full bg-surface-3 overflow-hidden border border-navy-border">
           <div
             className="h-full rounded-full transition-all duration-700 ease-out relative"
@@ -159,7 +173,7 @@ export function BottomNav() {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs font-mono text-text-muted">
+        <div className="flex flex-wrap items-center justify-center gap-2 text-xs font-mono text-text-muted">
           {current && stepIndexInChapter >= 0 ? (
             <span>
               Chapter {current.chapter.id} &middot; Step {stepIndexInChapter + 1}/{current.chapter.steps.length}
@@ -188,11 +202,11 @@ export function BottomNav() {
       </div>
 
       {/* Next */}
-      <div className="w-52 flex justify-end shrink-0">
+      <div className="order-2 min-w-0 flex justify-end sm:order-3 sm:w-52 sm:shrink-0">
         {nextHref && nextLabel ? (
           <Link
             href={nextHref}
-            className="flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition-colors"
+            className="flex min-w-0 items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition-colors"
           >
             <span className="font-bold truncate">{nextLabel}</span>
             <ChevronRight className="w-4 h-4 shrink-0" />
@@ -200,9 +214,17 @@ export function BottomNav() {
         ) : showFinishCta ? (
           <Link
             href="/workshop/complete"
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-twilio-red text-white font-display font-extrabold text-sm shadow-[0_2px_10px_rgba(239,34,58,0.3)] hover:brightness-110 transition-all"
+            className="flex min-w-0 max-w-full items-center gap-2 px-4 py-2 rounded-lg bg-twilio-red text-white font-display font-extrabold text-sm shadow-[0_2px_10px_rgba(239,34,58,0.3)] hover:brightness-110 transition-all"
           >
             <span className="truncate">Finish workshop</span>
+            <ChevronRight className="w-4 h-4 shrink-0" />
+          </Link>
+        ) : showReviewCta ? (
+          <Link
+            href={showReviewCta}
+            className="flex min-w-0 max-w-full items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition-colors"
+          >
+            <span className="font-bold truncate">Review unfinished steps</span>
             <ChevronRight className="w-4 h-4 shrink-0" />
           </Link>
         ) : null}

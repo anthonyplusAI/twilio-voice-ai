@@ -83,6 +83,15 @@ test("a signed Builder handoff can dial one Canadian number for at most one minu
   assert.equal(fetchedActions.at(-1).url, "https://attendee.trycloudflare.com/call-ended");
   assert.equal(fetchedActions.at(-1).options.method, "POST");
   assert.equal(fetchedActions.at(-1).options.redirect, "error");
+  const forwardedParams = Object.fromEntries(new URLSearchParams(fetchedActions.at(-1).options.body));
+  assert.equal(
+    fetchedActions.at(-1).options.headers["X-Twilio-Signature"],
+    twilio.getExpectedTwilioSignature(
+      credentials.TWILIO_AUTH_TOKEN,
+      "https://attendee.trycloudflare.com/call-ended",
+      forwardedParams,
+    ),
+  );
 });
 
 test("unsigned and mismatched Builder action callbacks cannot reach the Codespace", async () => {

@@ -8,10 +8,7 @@ import { useAudienceMode } from "@/lib/AudienceContext";
 import { useProgressContext } from "./ProgressContext";
 import { ConfirmModal } from "./ConfirmModal";
 import { Menu, X } from "lucide-react";
-import workshopConfig from "@/workshop.config";
 import { SKIP_AHEAD_COPY } from "@/lib/workshop-copy";
-
-const SKIP_UNLOCK_KEY = `workshop-${workshopConfig.id}-skip-unlock-position`;
 
 function StepIcon({ state }: { state: "pending" | "active" | "completed" }) {
   if (state === "completed") {
@@ -50,7 +47,7 @@ function SidebarContent() {
   const stepSlug = params.step as string | undefined;
   const { config, chapters, getChapter } = useWorkshop();
   const chapter = chapterSlug ? getChapter(chapterSlug) : chapters[0];
-  const { progress, completedStepsSet } = useProgressContext();
+  const { progress, completedStepsSet, skipUnlockPosition, unlockThroughPosition } = useProgressContext();
   const { isBuilder } = useAudienceMode();
 
   const [pendingHref, setPendingHref] = useState<string | null>(null);
@@ -122,19 +119,8 @@ function SidebarContent() {
     const maxAllowed = Math.max(maxCompletedPosition + 1, currentPosition);
     if (targetPos <= maxAllowed) return;
 
-    // Shared session-scoped unlock with StepContent: if the learner already
-    // confirmed a skip to a position ≥ this target in this session, don't
-    // re-prompt. Prevents modal fatigue when navigating around ahead-of-progress
-    // steps they've already unlocked.
-    if (typeof window !== "undefined") {
-      try {
-        const stored = sessionStorage.getItem(SKIP_UNLOCK_KEY);
-        const unlocked = stored ? parseInt(stored, 10) : -1;
-        if (Number.isFinite(unlocked) && targetPos <= unlocked) return;
-      } catch {
-        // ignore and show the modal
-      }
-    }
+    // The provider remembers confirmed skips even if session storage is blocked.
+    if (targetPos <= skipUnlockPosition) return;
 
     e.preventDefault();
     setPendingHref(href);
@@ -144,23 +130,14 @@ function SidebarContent() {
   // captures live state (pendingHref) that changes per click anyway.
   function confirmSkipAhead() {
     if (!pendingHref) return;
-    // Persist the unlock so the learner isn't re-prompted in this session.
-    // Derive the target position from the href we queued.
+    // Derive the target position from the href we queued, then share the
+    // unlock with StepContent and ProgressTracker before navigating.
     const match = pendingHref.match(/^\/workshop\/([^/]+)\/([^/]+)$/);
     if (match && match[1] && match[2]) {
       const chap = chapters.find((c) => c.slug === match[1]);
       const step = chap?.steps.find((s) => s.slug === match[2]);
-      if (chap && step && typeof window !== "undefined") {
-        try {
-          const pos = positionOf(chap.id, step.id);
-          const stored = sessionStorage.getItem(SKIP_UNLOCK_KEY);
-          const prev = stored ? parseInt(stored, 10) : -1;
-          if (pos >= 0 && (!Number.isFinite(prev) || pos > prev)) {
-            sessionStorage.setItem(SKIP_UNLOCK_KEY, String(pos));
-          }
-        } catch {
-          // storage disabled — still navigate
-        }
+      if (chap && step) {
+        unlockThroughPosition(positionOf(chap.id, step.id));
       }
     }
     router.push(pendingHref);
@@ -352,7 +329,7 @@ function SidebarContent() {
         onClick={() => setMobileOpen(true)}
         aria-label="Open chapter steps"
         aria-expanded={mobileOpen}
-        className="md:hidden fixed bottom-20 left-4 z-40 w-12 h-12 rounded-full bg-twilio-red text-white shadow-[0_8px_24px_rgba(239,34,58,0.4)] flex items-center justify-center hover:brightness-110 active:scale-95 transition-all"
+        className="md:hidden fixed bottom-28 sm:bottom-20 left-4 z-40 w-12 h-12 rounded-full bg-twilio-red text-white shadow-[0_8px_24px_rgba(239,34,58,0.4)] flex items-center justify-center hover:brightness-110 active:scale-95 transition-all"
       >
         <Menu className="w-5 h-5" />
       </button>
