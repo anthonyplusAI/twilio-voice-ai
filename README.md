@@ -1,126 +1,158 @@
 <p align="center">
-  <img src="./docs/assets/voice-ai-workshop-icon.png" alt="Twilio Voice ConversationRelay workshop icon" width="180" />
+  <img src="./public/images/twilio-bug-red.svg" alt="Twilio" width="44" />
 </p>
 
-<h1 align="center">Build a Voice AI Agent</h1>
+<h1 align="center">Build a Voice AI Agent That Calls Your Phone</h1>
 
 <p align="center">
-  A guided workshop for building a conversational phone agent with Twilio ConversationRelay, OpenAI, and Node.js.
-</p>
-
-<p align="center">
-  <a href="https://github.com/anthonyplusAI/twilio-voice-ai/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/anthonyplusAI/twilio-voice-ai/ci.yml?branch=main&label=CI&color=EF223A" alt="CI status" /></a>
-  <img src="https://img.shields.io/badge/Node.js-22-000D25?logo=nodedotjs&logoColor=white" alt="Node.js 22" />
-  <img src="https://img.shields.io/badge/Next.js-16.2-000D25?logo=nextdotjs&logoColor=white" alt="Next.js 16.2" />
-  <img src="https://img.shields.io/badge/Twilio-ConversationRelay-EF223A?logo=twilio&logoColor=white" alt="Twilio ConversationRelay" />
+  Make a real phone call to an AI agent you can shape. Follow six guided chapters to choose its voice, add sample tools, and explore a human handoff with Twilio Conversation Relay, OpenAI, and Node.js.
 </p>
 
 <p align="center">
-  <a href="#overview">Overview</a> &middot;
-  <a href="#for-workshop-attendees">Attendees</a> &middot;
-  <a href="#installation">Installation</a> &middot;
-  <a href="#inside-the-workshop">Screenshots</a> &middot;
-  <a href="#architecture">Architecture</a> &middot;
-  <a href="#deployment">Deployment</a>
+  <strong>Choose a visual Explorer path or build the agent yourself in Codespaces.</strong><br />
+  At a hosted event, your organizer shares the workshop link.
 </p>
 
-## Inside the Workshop
+<p align="center">
+  <a href="#start-the-workshop"><strong>How to join</strong></a> &nbsp;·&nbsp;
+  <a href="https://codespaces.new/anthonyplusAI/twilio-voice-ai"><strong>Open a Builder Codespace</strong></a> &nbsp;·&nbsp;
+  <a href="#run-the-companion-app-locally"><strong>Run the site locally</strong></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/2%20paths-Explorer%20%2B%20Builder-000D25?style=flat-square" alt="Two paths: Explorer and Builder" />
+  <img src="https://img.shields.io/badge/6%20chapters-guided-EF223A?style=flat-square" alt="Six guided chapters" />
+  <img src="https://img.shields.io/badge/About%2090%20min-real%20phone%20calls-0263E0?style=flat-square" alt="About 90 minutes with real phone calls" />
+</p>
+
+<p align="center">
+  <img src="./public/images/illustrations/conversation-relay-hero.png" alt="A caller speaking with a virtual voice agent" width="760" />
+</p>
+
+> **The moment it clicks:** Enter your number in **Call Me**, answer your phone, and talk to the agent you just configured. Change its greeting, voice, or tools, then call again to hear the difference.
+
+## What you'll do
+
+| 01 · Make the first call | 02 · Give it a personality | 03 · Make it more capable |
+|:---|:---|:---|
+| Connect a phone call to an AI agent and hear a response. | Set a name, greeting, voice, and language. | Handle interruptions and keypad input, try sample tools, and optionally transfer to a person. |
+
+The workshop site includes a reference agent for **Explorer**. In **Builder**, you write and run your own Node.js agent in a GitHub Codespace. Both paths lead to a live phone conversation through the workshop site's **Call Me** feature.
+
+## See the workshop
+
+<p align="center">
+  <a href="./docs/assets/screenshots/home.png"><img src="./docs/assets/screenshots/home.png" alt="Workshop home page showing the six-chapter path and Start Workshop button" width="960" /></a>
+  <br />
+  <em>Six chapters take you from the first call to a voice agent you can demonstrate.</em>
+</p>
 
 <table>
   <tr>
-    <td colspan="2">
-      <img src="./docs/assets/screenshots/home.png" alt="Voice AI workshop home page with six chapter cards" />
-      <br />
-      <strong>Workshop map</strong>
-      <br />
-      Start from a six-chapter overview that shows the learning path, outcomes, and estimated time for each stage.
-    </td>
-  </tr>
-  <tr>
     <td width="50%">
-      <img src="./docs/assets/screenshots/persona-builder.png" alt="Persona Builder screen for configuring the voice agent" />
+      <a href="./docs/assets/screenshots/persona-builder.png"><img src="./docs/assets/screenshots/persona-builder-readme.png" alt="Persona Builder with presets and fields for the agent's name, personality, and greeting" /></a>
       <br />
-      <strong>Build an agent identity</strong>
-      <br />
-      Choose a preset persona or configure the agent's name, personality, greeting, voice, and language.
+      <strong>Shape the conversation</strong><br />
+      Choose a persona or write your own greeting and instructions.
     </td>
     <td width="50%">
-      <img src="./docs/assets/screenshots/tool-picker.png" alt="Tool Picker screen with weather, order, and joke tools" />
+      <a href="./docs/assets/screenshots/tool-picker.png"><img src="./docs/assets/screenshots/tool-picker-readme.png" alt="Tool picker with sample weather, order lookup, and joke tools" /></a>
       <br />
-      <strong>Add real capabilities</strong>
-      <br />
-      Toggle tools for weather, order lookup, and jokes, then test how those choices change the next call.
+      <strong>Hear what tools change</strong><br />
+      Turn sample tools on or off, then test the next call. Weather and order responses use demo data.
     </td>
   </tr>
 </table>
 
-## Overview
+## Choose your path
 
-This repository contains the workshop experience, its six chapters of content, and a built-in voice agent runtime. Learners can follow a visual Explorer track or build the Node.js agent step by step in the Builder track.
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#EF223A','primaryTextColor':'#FFFFFF','primaryBorderColor':'#000D25','lineColor':'#000D25','fontFamily':'Inter, system-ui, sans-serif'}}}%%
+flowchart LR
+  Start["Choose a path"] --> Explorer["Explorer<br/>configure visually"]
+  Start --> Builder["Builder<br/>write Node.js in Codespaces"]
+  Explorer --> Call["Call Me"]
+  Builder --> Call
+  Call --> Phone["Answer on your phone"]
+```
 
-The completed agent can place an outbound call, stream OpenAI responses through ConversationRelay, switch voices and languages, respond to keypad input, run demo tools, detect silence, and hand a call off to a human.
-
-### Learning modes
-
-| Mode | Intended for | Experience |
+| | Explorer | Builder |
 |---|---|---|
-| **Explorer** | Learners who want the concepts without writing code | Visual summaries, interactive configuration, and a built-in agent |
-| **Builder** | Developers building the agent | Codespaces, guided implementation, code examples, and optional solutions |
+| **Best for** | Learning how voice AI fits together without writing code | Building the WebSocket agent yourself |
+| **What you do** | Configure the hosted reference agent through visual controls | Follow code steps in a Codespace, edit `workshop/server.js`, and run it |
+| **What you need** | A phone that can receive a US or Canadian call | That phone, a GitHub account with Codespaces access, and an OpenAI API key |
+| **What you hear** | The hosted agent with your selected settings | Your current saved agent code on the next call |
 
-Learners choose a mode on their first visit and can switch modes from the workshop header at any time.
+You can switch paths from the workshop header. The organizer's upgraded Twilio account powers **Call Me** for both paths; you do not need personal Twilio credentials to use that button.
 
-## For Workshop Attendees
+## The six-chapter journey
 
-### Prerequisites
+| Chapter | What changes |
+|---|---|
+| **1 · Mission Briefing** | Understand the call flow and prepare your environment. |
+| **2 · First Contact** | Connect the agent and make its first phone call. |
+| **3 · Identity** | Choose its persona, voice, greeting, and language. |
+| **4 · Reflexes** | Handle interruptions, keypad input, silence, and language changes. |
+| **5 · Superpowers** | Try sample tools and an optional live transfer to a second phone. |
+| **6 · Launch** | Polish the experience, explore deployment, and showcase the agent. |
 
-- A GitHub account with access to [Codespaces](https://github.com/features/codespaces) for the Builder track
-- A phone that can receive the workshop's test call
-- Approximately 90 to 95 minutes
-- An OpenAI API key from the facilitator or your own account; upgraded Twilio credentials are also needed if you use `npm run call` with your own account
+Plan for roughly 90 to 95 minutes. Chapter times are pacing guides.
 
-Facilitated events may provide credentials at [twil.io/keys](https://twil.io/keys). Public attendees do not receive the repository's Codespaces secrets. Put a working `OPENAI_API_KEY` in `workshop/.env` before calling your Builder agent. Fill the Twilio values only if you also want to place a call from your Codespace with `npm run call`.
+## Start the workshop
 
-**Call Me on the workshop site uses the site's Twilio account**, including for Builder calls to your Codespace. `npm run call` uses the Twilio credentials in your Codespace's `workshop/.env`. Both call paths require an **upgraded Twilio account**: [current Twilio trial rules block `<ConversationRelay>`](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs), even for a verified recipient. If you use your own account, [accept the Conversation Relay AI/ML features addendum](https://www.twilio.com/docs/voice/conversationrelay/onboarding#configuration-steps-in-the-twilio-console) in its Voice settings before calling.
+At a facilitated event, open the workshop URL from your organizer and choose **Explorer** or **Builder** when prompted. The site can call valid US and Canadian phone numbers.
 
-The site's Call Me button accepts valid US and Canadian numbers. It allows one active call to a number and up to ten started calls to that number in any rolling 60 minutes. These limits apply to both Explorer and Builder calls made from the site. Calls started with `npm run call` use your Codespace's Twilio account instead.
+### Explorer: start with the hosted agent
 
-### Getting started
+1. Select **Explorer** and follow the chapter cards.
+2. Use **Call Me** to answer a call from the hosted agent.
+3. Change the persona, voice, language, or sample tools and call again.
 
-1. Open the workshop URL provided by the facilitator.
-2. Choose **Explorer** or **Builder** when prompted.
-3. For Builder mode, [create a Codespace for this repository](https://codespaces.new/anthonyplusAI/twilio-voice-ai).
-4. Add an OpenAI API key to `workshop/.env` from the facilitator's [twil.io/keys](https://twil.io/keys) instructions or your own account. The site's Call Me button needs no Twilio credentials in your Codespace. Add upgraded Twilio credentials if you also plan to run `npm run call` with your own account.
-5. For `npm run call`, add your real phone number to `MY_PHONE_NUMBER` in `workshop/.env` using [E.164 format](https://www.twilio.com/docs/glossary/what-e164), such as `+12065550101` for a US-format example. The site's Call Me button asks for the number in its own form.
-6. To test a live handoff in Chapter 5, set `HANDOFF_PHONE_NUMBER` to a second reachable E.164 phone number, different from the caller's phone.
-7. Follow the chapter navigation in the workshop app. When Chapter 2 asks you to start your server, run `npm run dev` from `workshop/`. It restarts after you save JavaScript changes.
+Explorer needs no Codespace or personal API keys when the organizer has configured the workshop site.
 
-The dev container installs the Builder dependencies, starts a Cloudflare Quick Tunnel to the Codespace's protected proxy, and creates `workshop/.env` once. Rebuilding the container preserves your edits to that file. Codespaces terminals already open in `workshop/`; run `tunnel-url` for the public `/twiml` URL. For an optional call using your own Twilio account, open a second terminal and run `npm run call`. If you opened a terminal at the repository root, run `cd workshop` first. Keep Codespaces port `8080` private in the Ports tab: making it public bypasses the tunnel's `/call` block and WebSocket signature check.
+### Builder: make the call run your code
 
-### Workshop agenda
+1. Select **Builder** and [create a Codespace for this repository](https://codespaces.new/anthonyplusAI/twilio-voice-ai).
+2. Add an `OPENAI_API_KEY` to `workshop/.env`. Your organizer may supply one; public Codespaces do not inherit this repository's secrets.
+3. Follow the workshop steps to create `workshop/server.js`. When Chapter 2 asks you to start the server, run `npm run dev` from `workshop/`. The Codespace terminal normally opens there.
+4. Run `tunnel-url` to get your current public `/twiml` URL. Paste it into the workshop site's **Call Me** form, enter your phone number, and answer the call.
+5. Edit and save `workshop/server.js`, then call again to hear your change. The development server restarts after JavaScript edits.
 
-| # | Chapter | Outcome | Estimate |
-|---:|---|---|---:|
-| 1 | **Mission Briefing** | Understand the architecture and prepare the environment | 15 min |
-| 2 | **First Contact** | Build the WebSocket server and make the first call | 15 min |
-| 3 | **Identity** | Configure the agent's persona, voice, and language | 15 min |
-| 4 | **Reflexes** | Handle interruptions, keypad input, silence, and language switching | 15 min |
-| 5 | **Superpowers** | Add demo tools and live agent handoff | 20 min |
-| 6 | **Launch** | Polish, deploy, and present the agent | 15 min |
+The Codespace sets up a Cloudflare Quick Tunnel through a protected proxy. **Keep Codespaces port `8080` private** in the Ports tab; the tunnel is the intended public route.
 
-Chapter estimates are pacing guides and currently total 95 minutes.
+For a Builder live handoff in Chapter 5, set `HANDOFF_PHONE_NUMBER` in `workshop/.env` to a second reachable E.164 number, different from the caller's number. Restart `npm run dev` after changing `.env`. Explorer handoff depends on the organizer's site configuration.
 
-## Installation
+<details>
+<summary>Optional: call from your own Twilio account</summary>
 
-These steps run the full companion app and its custom WebSocket server locally.
+The site's **Call Me** button uses the organizer's Twilio account. To initiate a call from your Codespace with `npm run call`, add `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, and your [E.164](https://www.twilio.com/docs/glossary/what-e164) `MY_PHONE_NUMBER` (for example, `+12065550101`) to `workshop/.env`. Run `npm run call` from `workshop/` in a second terminal.
 
-### Maintainer prerequisites
+Your own account must be upgraded because [Twilio trial accounts block the `<ConversationRelay>` TwiML noun](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). Accept the [Conversation Relay AI/ML features addendum](https://www.twilio.com/docs/voice/conversationrelay/onboarding#configuration-steps-in-the-twilio-console) before placing a call.
 
-- [Node.js 22](https://nodejs.org/)
-- [pnpm 10.20](https://pnpm.io/installation)
-- A Twilio account SID, auth token, and voice-capable phone number for test calls
-- An OpenAI API key for agent responses
+</details>
 
-### Local setup
+## How a call works
+
+Twilio Voice places the call. [Conversation Relay](https://www.twilio.com/docs/voice/conversationrelay) handles speech recognition and speech synthesis, then exchanges text with the agent over a WebSocket. The hosted agent or your Builder server streams OpenAI responses and can use sample tools. An optional handoff transfers the call to a configured human number.
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#EF223A','primaryTextColor':'#FFFFFF','primaryBorderColor':'#000D25','lineColor':'#000D25','fontFamily':'Inter, system-ui, sans-serif'}}}%%
+flowchart LR
+  UI["Workshop site"] -->|starts call| Twilio["Twilio Voice<br/>Conversation Relay"]
+  Phone["Your phone"] <-->|live audio| Twilio
+  Twilio <-->|text over WebSocket| Agent["Agent server<br/>hosted or Codespace"]
+  Agent <-->|streamed responses| OpenAI["OpenAI"]
+  Agent <-->|sample lookups| Tools["Demo tools"]
+  Twilio -->|optional transfer| Human["Human phone"]
+```
+
+The repository contains the workshop site, the hosted reference agent, and the Builder starter project. It is a learning environment: the weather and order tools use sample data, and Chapter 6 introduces deployment rather than deploying each attendee's Codespace automatically.
+
+## Run the companion app locally
+
+The repository root runs the workshop site and its built-in voice agent. The attendee project is in `workshop/`.
+
+**To preview the site:** Node.js 22 and pnpm 10.20. **To test real calls:** an OpenAI API key plus an upgraded Twilio account with a voice-capable number and the [Conversation Relay addendum accepted](https://www.twilio.com/docs/voice/conversationrelay/onboarding#configuration-steps-in-the-twilio-console).
 
 ```bash
 git clone https://github.com/anthonyplusAI/twilio-voice-ai.git
@@ -130,135 +162,73 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-Open [http://localhost:8080](http://localhost:8080). Edit `.env.local` before testing calls. Twilio also needs a public HTTPS and secure WebSocket URL to reach a local voice server. For the attendee Builder server, point a development tunnel at the protected proxy on port `8081`; Chapter 1 gives the local ngrok steps.
-
-## Usage
+Open [http://localhost:8080](http://localhost:8080). Fill in `.env.local` before testing calls. Twilio needs public HTTPS and secure WebSocket endpoints to reach a local voice server; Chapter 1 covers the development tunnel for the Builder project.
 
 | Command | Purpose |
 |---|---|
-| `pnpm dev` | Run Next.js, the voice WebSocket endpoint, and analytics on port `8080` |
-| `pnpm dev:next` | Run only the Next.js development server; voice WebSockets and analytics are unavailable |
-| `pnpm lint` | Run ESLint |
-| `pnpm typecheck` | Run TypeScript without emitting files |
-| `pnpm build` | Create the production Next.js build |
-| `pnpm start` | Start the custom server using the current `NODE_ENV` |
+| `pnpm dev` | Run the workshop site, voice WebSocket, and analytics on port `8080` |
+| `pnpm dev:next` | Run the Next.js UI only, without voice WebSocket or analytics |
+| `pnpm lint` / `pnpm typecheck` | Check source quality and types |
+| `pnpm test` | Build and run the integration tests |
+| `pnpm build` / `pnpm start` | Build and start the custom server |
 
-The home page launches the workshop. Presenter slides are available at `/slides`, health status at `/health`, and workshop analytics at `/admin`.
+The home page launches the workshop. Presenter slides are at `/slides`, health status is at `/health`, and the organizer's analytics dashboard is at `/admin`.
 
-### Facilitator preflight for a group event
+<details>
+<summary>Companion app environment variables</summary>
 
-- Use an upgraded Twilio account for the workshop site's Call Me button; [Twilio trials block `<ConversationRelay>`](https://www.twilio.com/docs/usage/trials/try-out-voice#blocked-verbs). The [default outbound rate](https://www.twilio.com/docs/voice/api/call-resource) is one call per second, so a burst of attendee clicks can queue.
-- On that account, [accept the Conversation Relay AI/ML features addendum](https://www.twilio.com/docs/voice/conversationrelay/onboarding#configuration-steps-in-the-twilio-console) under Voice settings; account upgrade alone does not enable Conversation Relay.
-- Before deploying the protected site, run [`scripts/configure-call-protection.sh`](./scripts/configure-call-protection.sh) after the Azure infrastructure setup. It creates the shared `CallLimits` and `AnalyticsEvents` tables and sets the Container App's storage, admin-password, and public-URL secrets.
-- Set the deployed site's Twilio credentials and `OPENAI_API_KEY`. Set `HANDOFF_PHONE_NUMBER` to a second reachable phone if the Explorer handoff exercise should transfer.
-- On the workshop-only Twilio account, verify [Voice dialing permissions](https://www.twilio.com/docs/voice/api/dialing-permissions-resources): enable low-risk **United States/Canada** only, and leave high-risk categories off. Twilio lists this combined destination as `US`; this account setting also protects calls made outside the site's Call Me button.
-- Test from a fresh public attendee Codespace: fill `workshop/.env`, run `npm run dev`, copy `tunnel-url` into Call Me, change the greeting in `server.js`, save, and call again after ending the first call. Confirm the second call speaks the new greeting. The site reads the Codespace's current `/twiml` response on every Builder call and passes its supported ConversationRelay settings to Twilio. When the AI requests a handoff, the site checks the Codespace's `/call-ended` response before returning permitted dialing instructions to Twilio. Confirm that the public tunnel returns 404 for `/call` and that `npm run call` from the Codespace's `workshop/` terminal reaches a phone when a separate upgraded attendee Twilio account is configured.
-- Place an Explorer call using the site's hosted agent and check the selected voice, tool, and handoff settings. If handoff is unavailable, tell attendees before the Chapter 5 exercise.
+Copy `.env.example` to `.env.local`. The Builder starter has a separate `workshop/.env`.
 
-The Call Me endpoint remains public so attendees can use it without signing in. Its per-number limits reduce accidental or repeated use, but there is no site-wide daily cap; monitor Twilio usage during an event. Builder calls accept only the guided ConversationRelay TwiML and a single US or Canadian live handoff. Other TwiML verbs are refused by the shared site's Call Me button; a Codespace's public tunnel also blocks direct `/call` requests. Attendees with their own upgraded account can call through the local `npm run call` command. `/admin` and `/admin/reset-all` require HTTP Basic authentication with the organizer password. Workshop analytics events are stored in the `AnalyticsEvents` Azure Table and survive container replacements; local SQLite is rebuilt from that table for reports. Reset starts a fresh dashboard run while retaining earlier runs for recovery.
+| Variable | When needed | Purpose |
+|---|---|---|
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` | Real calls | Twilio credentials and voice-capable source number |
+| `OPENAI_API_KEY` | Agent responses | OpenAI credential for the hosted agent |
+| `OPENAI_MODEL` | Optional | Chat Completions model; defaults to `gpt-5.4-nano` |
+| `HANDOFF_PHONE_NUMBER` | Live handoff | Second reachable E.164 phone number |
+| `CALL_LIMIT_AZURE_TABLE_CONNECTION_STRING` | Production calls | Azure Table connection for shared call limits and analytics events |
+| `PUBLIC_BASE_URL` | Production calls | Public HTTPS origin for Twilio callbacks |
+| `ADMIN_PASSWORD` | Production dashboard | Password for `/admin` and `/admin/reset-all` |
+| `ADMIN_USER` | Optional | Dashboard username; defaults to `presenter` |
+| `WORKSHOP_SLIDES_EMBED_URL` | Optional | Published Google Slides embed URL for `/slides` |
+| `PORT` | Optional | Custom server port; defaults to `8080` |
 
-## Configuration
+Local call limits use `data/call-limits.db`; production uses Azure Table Storage so limits survive a container replacement.
 
-Copy `.env.example` to `.env.local` for the companion app.
+</details>
 
-| Variable | Required | Purpose |
-|---|---:|---|
-| `TWILIO_ACCOUNT_SID` | For calls | Twilio account identifier |
-| `TWILIO_AUTH_TOKEN` | For calls | Twilio API credential |
-| `TWILIO_PHONE_NUMBER` | For calls | Voice-capable Twilio number in E.164 format |
-| `OPENAI_API_KEY` | For calls | OpenAI credential used by the built-in agent |
-| `OPENAI_MODEL` | No | Chat Completions model; defaults to `gpt-5.4-nano` |
-| `HANDOFF_PHONE_NUMBER` | For handoff | Human destination number in E.164 format |
-| `CALL_LIMIT_AZURE_TABLE_CONNECTION_STRING` | Production calls | Connection string for the shared `CallLimits` Azure Table; set by the one-time protection script |
-| `PUBLIC_BASE_URL` | Production calls | Public HTTPS origin used for Twilio call and completion callbacks; set by the one-time protection script |
-| `ADMIN_PASSWORD` | Production admin | Organizer password for `/admin` and `/admin/reset-all`; set by the one-time protection script |
-| `ADMIN_USER` | No | Organizer Basic Auth username; defaults to `presenter` |
-| `WORKSHOP_SLIDES_EMBED_URL` | No | Published Google Slides embed URL for `/slides` |
-| `PORT` | No | Custom server port; defaults to `8080` |
+## For facilitators and maintainers
 
-The attendee-built scaffold under `workshop/` uses its own `.env`. Set `MY_PHONE_NUMBER` for outbound tests and a second reachable `HANDOFF_PHONE_NUMBER`, different from the caller's phone, to test live transfers.
+- [Facilitator guide](./docs/FACILITATOR_GUIDE.md) — account readiness, call paths, a full attendee test, and day-of controls.
+- [Deployment and rollback](./docs/DEPLOYMENT.md) — Azure Container Apps release flow and health checks.
+- [One-time infrastructure setup](./docs/INFRA_SETUP.md) — Azure resources, GitHub configuration, and call protection.
+- [Workshop authoring guide](./WORKSHOP_AUTHORING.md) — add content blocks and adapt the workshop experience.
 
-In local development, per-number call limits use `data/call-limits.db`. Production uses Azure Table Storage so a replacement Container App revision keeps the same limits.
-
-## Architecture
-
-The root app uses a custom Node.js HTTP server so Next.js routes, ConversationRelay WebSockets, and analytics share one port.
-
-```mermaid
-%%{init: {'theme':'base','themeVariables':{'primaryColor':'#EF223A','primaryTextColor':'#FFFFFF','primaryBorderColor':'#000D25','lineColor':'#000D25','fontFamily':'Inter, system-ui, sans-serif'}}}%%
-flowchart LR
-  Learner["Learner browser"] -->|configures agent and requests a call| App["Next.js workshop app"]
-  App -->|Calls API, Builder TwiML supplied inline| Voice["Twilio Voice"]
-  App -->|reserve calls by phone| Limits["Azure Table CallLimits"]
-  App -->|Builder: fetch current /twiml| Tunnel["Codespace Quick Tunnel"]
-  Voice -->|calls| Phone["Learner phone"]
-  Voice -->|call completion callback| App
-  Voice -->|Explorer: /api/twiml| App
-  Voice -->|Builder: signed handoff action| App
-  App -->|Builder: POST /call-ended| Tunnel
-  Voice <-->|speech and text| Relay["ConversationRelay"]
-  Relay <-->|Explorer: WSS /ws| Agent["Hosted voice agent"]
-  Relay <-->|Builder: WSS /ws| Tunnel
-  Tunnel --> Proxy["Protected Codespace proxy"]
-  Proxy -->|allowed requests| Builder["Attendee server.js"]
-  Agent <-->|streams completions| OpenAI["OpenAI"]
-  Builder <-->|streams completions| OpenAI
-  App -->|records events| AnalyticsTable["Azure Table AnalyticsEvents"]
-  AnalyticsTable -->|rebuilds query cache| SQLite["SQLite analytics cache"]
-  SQLite -->|reports| Admin["/admin"]
-```
-
-### Repository map
-
-| Path | Responsibility |
+| Path | What it contains |
 |---|---|
-| `src/app/` | Next.js pages and API routes |
-| `src/content/` | Six chapters and 29 registered workshop steps |
-| `src/workshop.config.ts` | Workshop metadata, branding, features, and sharing |
-| `voice-agent/` | Built-in ConversationRelay and OpenAI runtime |
-| `analytics/` | Event storage, dashboard queries, and PDF reports |
-| `workshop/` | Starter project that Builder attendees complete |
-| `.devcontainer/` | Codespaces setup and Cloudflare tunnel startup |
+| `src/app/`, `src/content/` | Next.js pages, API routes, and 29 workshop steps |
+| `src/workshop.config.ts` | Workshop metadata, chapter navigation, branding, and feature settings |
+| `voice-agent/` | Hosted Conversation Relay and OpenAI runtime |
+| `workshop/` | Builder starter project |
+| `.devcontainer/` | Codespaces setup and protected tunnel |
+| `analytics/` | Event storage, dashboard queries, and reports |
 
-### Runtime endpoints
+To adapt the workshop, edit `src/workshop.config.ts` and register new content in `src/content/registry.ts`. The [authoring guide](./WORKSHOP_AUTHORING.md) covers the content blocks.
+
+<details>
+<summary>Runtime endpoints</summary>
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/call` | Initiate an outbound Twilio call |
-| `POST /api/call-status` | Receive signed Twilio call-completion callbacks and release active-call reservations |
-| `POST /api/twiml` | Return ConversationRelay TwiML |
-| `WS(S) /ws` | Exchange ConversationRelay messages with the built-in agent |
-| `POST /api/events` | Ingest workshop analytics events |
-| `GET /health` | Return liveness and uptime |
-| `GET /admin` | Render the organizer-authenticated analytics dashboard |
+| `POST /api/call` | Start an outbound Twilio call |
+| `POST /api/call-status` | Receive signed call-completion callbacks and release active-call reservations |
+| `POST /api/twiml` | Return Conversation Relay TwiML |
+| `POST /api/connect-action` | Handle a signed handoff action |
+| `WS(S) /ws` | Exchange Conversation Relay messages with the hosted agent |
+| `POST /api/events` | Receive workshop analytics events |
+| `GET /health` / `GET /health/analytics` | Report app and analytics health |
+| `GET /admin` | Show the organizer's authenticated analytics dashboard |
 
-## Customization
-
-- Edit `src/workshop.config.ts` to change workshop metadata, chapter navigation, branding, themes, feature toggles, and share copy.
-- Add typed content blocks under `src/content/` and register each step in `src/content/registry.ts`.
-- Read the [workshop authoring guide](./WORKSHOP_AUTHORING.md) for content examples and platform conventions.
-- Put app-served illustrations and icons under `public/images/`. Put README-only artwork under `docs/assets/`.
-
-The content system is reusable, while the included API routes, voice agent, and analytics remain specific to this Voice AI workshop.
-
-## Deployment
-
-Pushes to `main` run lint, type checking, a production build, integration tests, and secret scanning. Pull requests also run dependency review. A successful `Validate` job builds a Docker image, pushes it to Azure Container Registry, and deploys it to Azure Container Apps with OpenID Connect (OIDC) authentication.
-
-- [Deployment workflow and rollback](./docs/DEPLOYMENT.md)
-- [One-time Azure infrastructure setup](./docs/INFRA_SETUP.md)
-
-## Key Technologies
-
-| Technology | Role |
-|---|---|
-| [Twilio ConversationRelay](https://www.twilio.com/docs/voice/conversationrelay) | Connects a phone call to the application over WebSockets and handles speech-to-text and text-to-speech |
-| [Twilio Voice TwiML](https://www.twilio.com/docs/voice/twiml) | Defines call behavior and ConversationRelay configuration |
-| [OpenAI Chat Completions](https://platform.openai.com/docs/api-reference/chat) | Streams model output and tool calls |
-| [Next.js](https://nextjs.org/) | Renders the workshop UI and API routes |
-| [GitHub Codespaces](https://github.com/features/codespaces) | Provides the Builder development environment |
-| [Cloudflare Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) | Gives the attendee server a temporary public endpoint |
-| [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/) | Hosts the production container |
+</details>
 
 ## License
 
