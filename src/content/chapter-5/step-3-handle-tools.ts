@@ -290,26 +290,11 @@ async function handleToolCalls(ws, toolCalls, iteration, controller, assistantTe
     },
 
     {
-      type: "code",
+      type: "callout",
       audience: "builder",
-      language: "javascript",
-      file: "server.js",
-      code: `// Send a filler message for slow tools. Add any tool name that
-// routinely takes more than ~500ms so the caller hears something
-// instead of dead air while the lookup runs.
-const SLOW_TOOLS = ["lookup_order"];
-
-async function handleToolCalls(ws, toolCalls, iteration = 0) {
-  const hasSlowTool = toolCalls.some(
-    tc => SLOW_TOOLS.includes(tc.function.name)
-  );
-
-  if (hasSlowTool) {
-    sendText(ws, "One moment while I look that up...", true);
-  }
-
-  // ... rest of the function
-}`,
+      variant: "tip",
+      content:
+        "The `handleToolCalls` function above already includes the filler message for slow tools. If another tool takes more than about 500 ms, add its name to the existing `SLOW_TOOLS` array. Keep one array and one `handleToolCalls` function in `server.js`.",
     },
 
     {

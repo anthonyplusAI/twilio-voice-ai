@@ -50,6 +50,34 @@ test("hosted verifier accepts a site-signed Builder WebSocket handshake", async 
   assert.equal(response.headers.get("cache-control"), "no-store");
 });
 
+test("hosted verifier validates action callback parameters and exact tunnel URL", async () => {
+  const actionUrl = "https://learner.trycloudflare.com/call-ended";
+  const params = { CallSid: "CA-test", HandoffData: '{"reasonCode":"live-agent-handoff"}' };
+  const signature = twilio.getExpectedTwilioSignature(token, actionUrl, params);
+  const request = (url, values) => new Request("https://workshop.example/api/verify-builder-ws", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url, signature, params: values }),
+  });
+  const route = routeFor();
+  assert.equal((await route(request(actionUrl, params))).status, 200);
+  assert.equal((await route(request(actionUrl, { ...params, CallSid: "CA-tampered" }))).status, 403);
+  assert.equal((await route(request("https://attacker.example/call-ended", params))).status, 400);
+  assert.equal((await route(request(`${actionUrl}?x=1`, params))).status, 400);
+
+  const longParams = {
+    CallSid: "CA-long",
+    HandoffData: JSON.stringify({ reasonCode: "live-agent-handoff", summary: "x".repeat(8 * 1024) }),
+  };
+  const longSignature = twilio.getExpectedTwilioSignature(token, actionUrl, longParams);
+  const longRequest = new Request("https://workshop.example/api/verify-builder-ws", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: actionUrl, signature: longSignature, params: longParams }),
+  });
+  assert.equal((await route(longRequest)).status, 200);
+});
+
 test("hosted verifier accepts Twilio's documented WebSocket trailing-slash signature", async () => {
   const signature = twilio.getExpectedTwilioSignature(token, `${url}/`, {});
   const response = await routeFor()(verifyRequest(url, signature));
@@ -86,7 +114,7 @@ test("hosted verifier bounds requests and fails closed without the site token", 
   const oversized = new Request("https://workshop.example/api/verify-builder-ws", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: "x".repeat(1025),
+    body: JSON.stringify({ url, signature: twilio.getExpectedTwilioSignature(token, url, {}), padding: "x".repeat(1025) }),
   });
   assert.equal((await route(oversized)).status, 413);
   assert.equal((await routeFor("")(verifyRequest(url))).status, 503);

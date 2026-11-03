@@ -97,7 +97,15 @@ export async function POST(request: NextRequest) {
   try {
     const response = await fetch(details.actionUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        // The public Codespace proxy checks this signature before forwarding
+        // the action to the learner's server. Twilio signed the site callback
+        // above; this new signature covers the URL and form the proxy receives.
+        "X-Twilio-Signature": twilio.getExpectedTwilioSignature(
+          authToken, details.actionUrl, params,
+        ),
+      },
       body: form.toString(),
       redirect: "error",
       cache: "no-store",

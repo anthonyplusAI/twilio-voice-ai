@@ -135,29 +135,35 @@ const SUPPORTED_CITIES = "San Francisco, New York, Chicago, Miami, Seattle, Los 
 const SUPPORTED_ORDERS = "123, 456, or 789";
 
 export function executeTool(name, args) {
+  const params = args !== null && typeof args === "object" && !Array.isArray(args)
+    ? args : {};
   switch (name) {
     case "check_weather": {
-      const city = typeof args.city === "string"
-        ? args.city.normalize("NFKC").trim().toLowerCase() : "";
-      const weather = MOCK_WEATHER[CITY_ALIASES[city] || city];
+      const cityName = typeof params.city === "string" ? params.city : "";
+      const city = cityName.normalize("NFKC").trim().toLowerCase();
+      const lookupCity = Object.hasOwn(CITY_ALIASES, city) ? CITY_ALIASES[city] : city;
+      const weather = Object.hasOwn(MOCK_WEATHER, lookupCity) ? MOCK_WEATHER[lookupCity] : null;
       if (!weather) {
         return JSON.stringify({
-          error: `"${args.city}" is not in the workshop mock data. This is demo data, not a live weather API. Supported cities: ${SUPPORTED_CITIES}.`,
+          error: `"${cityName}" is not in the workshop mock data. This is demo data, not a live weather API. Supported cities: ${SUPPORTED_CITIES}.`,
         });
       }
       return JSON.stringify({
-        city: args.city,
+        city: cityName,
         temperature_f: weather.temp,
         conditions: weather.conditions,
         humidity_percent: weather.humidity,
       });
     }
     case "lookup_order": {
-      const orderNum = (args.order_number || "").trim();
-      const order = MOCK_ORDERS[orderNum];
+      const value = params.order_number;
+      const orderNum = typeof value === "string" ||
+        (typeof value === "number" && Number.isFinite(value))
+        ? String(value).trim() : "";
+      const order = Object.hasOwn(MOCK_ORDERS, orderNum) ? MOCK_ORDERS[orderNum] : null;
       if (!order) {
         return JSON.stringify({
-          error: `Order "${args.order_number}" is not in the workshop mock data. This is demo data, not a live order system. Supported order numbers: ${SUPPORTED_ORDERS}.`,
+          error: `Order "${orderNum}" is not in the workshop mock data. This is demo data, not a live order system. Supported order numbers: ${SUPPORTED_ORDERS}.`,
         });
       }
       return JSON.stringify({

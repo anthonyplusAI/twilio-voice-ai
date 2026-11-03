@@ -54,7 +54,7 @@ export default {
       audience: "builder",
       variant: "info",
       content:
-        "Create a new file `tool-handlers.js` in the same folder as `server.js`. We'll build it up in two passes: first the `tools` schema array (below), then the `toolHandlers` dispatch map. Everything exported from this one file so `server.js` can `require(\"./tool-handlers.js\")` on the next page.",
+        "Create a new file `tool-handlers.js` in the same folder as `server.js`. We'll build it up in two passes: first the `tools` schema array (below), then the `toolHandlers` dispatch map. Export both so `server.js` can import the tools before sending the next AI request.",
     },
 
     {
@@ -281,6 +281,21 @@ module.exports = { tools, toolHandlers };`,
     },
 
     { type: "section", title: "Passing Tools to OpenAI", audience: "builder" },
+
+    {
+      type: "prose",
+      audience: "builder",
+      content:
+        "First, add this import beside the other `require` statements near the top of `server.js`. Without it, `tools` is undefined when the next caller prompt reaches OpenAI:",
+    },
+
+    {
+      type: "code",
+      audience: "builder",
+      language: "javascript",
+      file: "server.js",
+      code: `const { tools } = require("./tool-handlers.js");`,
+    },
 
     {
       type: "prose",

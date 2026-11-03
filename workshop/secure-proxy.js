@@ -93,6 +93,7 @@ function hostedVerifierUrl(siteOrigin) {
 }
 
 async function verifyHostedSignature(url, signature, {
+  params,
   siteOrigin = process.env.WORKSHOP_SITE_URL || DEFAULT_SITE_ORIGIN,
   fetchImpl = fetch,
 } = {}) {
@@ -100,7 +101,7 @@ async function verifyHostedSignature(url, signature, {
   const response = await fetchImpl(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url, signature }),
+    body: JSON.stringify({ url, signature, ...(params === undefined ? {} : { params }) }),
     redirect: "error",
     signal: AbortSignal.timeout(2500),
   });
@@ -134,7 +135,7 @@ function responseHeaders(headers) {
   return filtered;
 }
 
-function forwardHttp(req, res, upstreamPort, publicHost) {
+function forwardHttp(req, res, upstreamPort, publicHost, bufferedBody = null) {
   const declaredLength = req.headers["content-length"];
   if (typeof declaredLength === "string" &&
       (!/^\d+$/.test(declaredLength) || Number(declaredLength) > MAX_HTTP_BODY_BYTES)) {
@@ -142,12 +143,20 @@ function forwardHttp(req, res, upstreamPort, publicHost) {
     return;
   }
 
+  const headers = { ...req.headers, host: publicHost || req.headers.host };
+  if (Buffer.isBuffer(bufferedBody)) {
+    // The validated action body has already been consumed. Give the learner
+    // server an exact length even when the public request used chunked encoding.
+    delete headers["transfer-encoding"];
+    delete headers.trailer;
+    headers["content-length"] = String(bufferedBody.length);
+  }
   const upstream = http.request({
     hostname: "127.0.0.1",
     port: upstreamPort,
     method: req.method,
     path: req.url,
-    headers: { ...req.headers, host: publicHost || req.headers.host },
+    headers,
   });
   let received = 0;
   let overflow = false;
@@ -164,6 +173,11 @@ function forwardHttp(req, res, upstreamPort, publicHost) {
   upstream.on("error", () => {
     if (!overflow) sendHttp(res, 502);
   });
+
+  if (Buffer.isBuffer(bufferedBody)) {
+    upstream.end(bufferedBody);
+    return;
+  }
 
   req.on("data", (chunk) => {
     if (overflow) return;
@@ -182,6 +196,85 @@ function forwardHttp(req, res, upstreamPort, publicHost) {
   });
   req.on("error", () => upstream.destroy());
   req.on("aborted", () => upstream.destroy());
+}
+
+function readActionBody(req) {
+  const declaredLength = req.headers["content-length"];
+  if (declaredLength !== undefined &&
+      (typeof declaredLength !== "string" || !/^\d+$/.test(declaredLength) ||
+        Number(declaredLength) > MAX_HTTP_BODY_BYTES)) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve, reject) => {
+    let bytes = 0;
+    const chunks = [];
+    req.on("data", (chunk) => {
+      bytes += chunk.length;
+      if (bytes > MAX_HTTP_BODY_BYTES) {
+        req.pause();
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+    req.on("aborted", () => reject(new Error("Action request aborted")));
+  });
+}
+
+async function forwardVerifiedAction(req, res, upstreamPort, publicHost, {
+  readToken, validateTwilio, verifySite,
+}) {
+  const signature = req.headers["x-twilio-signature"];
+  if (typeof signature !== "string" || !/^[A-Za-z0-9+/]{27}=$/.test(signature)) {
+    sendHttp(res, 403);
+    return;
+  }
+  const contentType = req.headers["content-type"];
+  if (typeof contentType !== "string" ||
+      contentType.split(";", 1)[0].trim().toLowerCase() !== "application/x-www-form-urlencoded") {
+    sendHttp(res, 415);
+    return;
+  }
+
+  const body = await readActionBody(req);
+  if (!body) {
+    sendHttp(res, 413);
+    return;
+  }
+  const form = new URLSearchParams(body.toString("utf8"));
+  const params = Object.fromEntries(form);
+  // The Twilio SDK signs one value per name, while URLSearchParams.get in the
+  // taught action handler reads the first. Reject ambiguity before forwarding.
+  if (form.size !== Object.keys(params).length) {
+    sendHttp(res, 400);
+    return;
+  }
+
+  const url = `https://${publicHost}/call-ended`;
+  const token = readToken();
+  let locallyValid = false;
+  if (token) {
+    try {
+      locallyValid = validateTwilio(token, signature, url, params);
+    } catch { /* A shared-account callback may use the site's token. */ }
+  }
+  if (!locallyValid) {
+    let hostedValid;
+    try {
+      hostedValid = await verifySite(url, signature, params);
+    } catch {
+      sendHttp(res, 503);
+      return;
+    }
+    if (!hostedValid) {
+      sendHttp(res, 403);
+      return;
+    }
+  }
+
+  forwardHttp(req, res, upstreamPort, publicHost, body);
 }
 
 function forwardWebSocket(req, socket, head, upstreamPort, publicHost) {
@@ -244,9 +337,10 @@ function createProxyServer({
   upstreamPort = Number(process.env.TUNNEL_UPSTREAM_PORT || 8080),
   resolveHost = resolvePublicHost,
   readToken = readLocalAuthToken,
-  validateTwilio = (token, signature, url) =>
-    require("twilio").validateRequest(token, signature, url, {}),
-  verifySite = verifyHostedSignature,
+  validateTwilio = (token, signature, url, params = {}) =>
+    require("twilio").validateRequest(token, signature, url, params),
+  verifySite = (url, signature, params) =>
+    verifyHostedSignature(url, signature, { params }),
 } = {}) {
   if (!Number.isInteger(upstreamPort) || upstreamPort < 1 || upstreamPort > 65535) {
     throw new Error("TUNNEL_UPSTREAM_PORT must be a valid port");
@@ -263,6 +357,12 @@ function createProxyServer({
     if (req.url !== "/health" &&
         (!validTunnelHost(publicHost) || !matchesPublicHost(req.headers.host, publicHost))) {
       sendHttp(res, 400);
+      return;
+    }
+    if (req.url === "/call-ended") {
+      void forwardVerifiedAction(req, res, upstreamPort, publicHost, {
+        readToken, validateTwilio, verifySite,
+      }).catch(() => sendHttp(res, 503));
       return;
     }
     forwardHttp(req, res, upstreamPort, publicHost);

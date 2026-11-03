@@ -7,9 +7,19 @@ import { countValidCompleted, totalStepCount } from "@/lib/progress-math";
 import workshopConfig from "@/workshop.config";
 
 const STORAGE_KEY = `workshop-${workshopConfig.id}-progress`;
-// Must match the key used in Sidebar/StepContent for session-scoped skip-ahead
-// unlocks. Duplicated (not imported) to avoid a hook → component cycle.
 const SKIP_UNLOCK_KEY = `workshop-${workshopConfig.id}-skip-unlock-position`;
+
+function loadSkipUnlockPosition(): number {
+  try {
+    const stored = sessionStorage.getItem(SKIP_UNLOCK_KEY);
+    if (stored === null) return -1;
+    const position = Number(stored);
+    return Number.isSafeInteger(position) && position >= 0 ? position : -1;
+  } catch {
+    // The provider still keeps the unlock in memory if session storage is disabled.
+    return -1;
+  }
+}
 
 /**
  * Migrations from older schema versions → current. Each entry takes the
@@ -116,11 +126,14 @@ export function useProgress() {
   const [progress, setProgress] = useState<Progress>(DEFAULT_PROGRESS);
   const [loaded, setLoaded] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
+  const [skipUnlockPosition, setSkipUnlockPosition] = useState(-1);
 
   useEffect(() => {
     const stored = loadProgress();
+    const storedSkipUnlockPosition = loadSkipUnlockPosition();
     queueMicrotask(() => {
       setProgress(stored);
+      setSkipUnlockPosition((current) => Math.max(current, storedSkipUnlockPosition));
       setLoaded(true);
     });
   }, []);
@@ -142,6 +155,21 @@ export function useProgress() {
     setProgress((prev) => {
       const next = { ...prev, ...partial };
       saveProgress(next);
+      return next;
+    });
+  }, []);
+
+  const unlockThroughPosition = useCallback((position: number) => {
+    if (!Number.isSafeInteger(position) || position < 0) return;
+    setSkipUnlockPosition((current) => {
+      const next = Math.max(current, position);
+      if (next !== current) {
+        try {
+          sessionStorage.setItem(SKIP_UNLOCK_KEY, String(next));
+        } catch {
+          // The in-memory unlock remains usable for this workshop visit.
+        }
+      }
       return next;
     });
   }, []);
@@ -242,6 +270,7 @@ export function useProgress() {
 
   const resetProgress = useCallback(() => {
     setProgress(DEFAULT_PROGRESS);
+    setSkipUnlockPosition(-1);
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -280,6 +309,8 @@ export function useProgress() {
     progress,
     completedStepsSet,
     loaded,
+    skipUnlockPosition,
+    unlockThroughPosition,
     storageFailed,
     dismissStorageWarning,
     update,
