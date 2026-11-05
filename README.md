@@ -35,7 +35,7 @@
 
 <!-- Video hosted as a GitHub user attachment. -->
 
-{{GITHUB_VIDEO_URL}}
+https://github.com/user-attachments/assets/4e84a061-72a6-474e-a6cc-c8b8116ff6df
 
 *45-second illustrated tour of the six chapters and the call you will build.*
 
