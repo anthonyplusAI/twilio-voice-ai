@@ -31,6 +31,14 @@
 
 > **The moment it clicks:** Enter your number in **Call Me**, answer your phone, and talk to the agent you just configured. Change its greeting, voice, or tools, then call again to hear the difference.
 
+## Watch the workshop film
+
+<!-- Video hosted as a GitHub user attachment. -->
+
+https://github.com/user-attachments/assets/4e84a061-72a6-474e-a6cc-c8b8116ff6df
+
+*45-second illustrated tour of the six chapters and the call you will build.*
+
 ## What you'll do
 
 | 01 · Make the first call | 02 · Give it a personality | 03 · Make it more capable |
